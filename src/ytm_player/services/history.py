@@ -284,7 +284,13 @@ class HistoryManager:
             return [dict(row) for row in rows]
 
     async def get_recently_played(self, limit: int = 50) -> list[dict]:
-        """Return recently-played tracks, deduplicated by video_id."""
+        """Return recently-played tracks, deduplicated by video_id.
+
+        The bare columns alongside ``MAX(played_at)`` are deliberate: with
+        exactly one min/max aggregate, SQLite documents that bare columns
+        take their values from the max row — i.e. each video's MOST RECENT
+        play. Not portable SQL, but this app is SQLite-only.
+        """
         if self._db is None:
             raise RuntimeError("Database not initialized")
         async with self._db.execute(
