@@ -25,6 +25,9 @@ from ytm_player.config.paths import CACHE_DIR, CONFIG_FILE
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_HISTORY_MIN_LISTEN_SECONDS = 5
+MAX_HISTORY_MIN_LISTEN_SECONDS = 3600
+
 
 @dataclass
 class GeneralSettings:
@@ -44,6 +47,13 @@ class PlaybackSettings:
     gapless: bool = True
     api_timeout: int = 15
     resume_on_launch: bool = True
+    # Minimum listened seconds before a track counts as a play instead of a
+    # skip. Used for local SQLite history and YT Music account reporting.
+    history_min_listen_seconds: int = DEFAULT_HISTORY_MIN_LISTEN_SECONDS
+    # Report plays back to your YouTube Music account history (so tracks
+    # played in the TUI show up in YT Music like any other client). Opt-out:
+    # set to false to keep TUI listening off your account.
+    sync_history_to_ytmusic: bool = True
 
 
 @dataclass
@@ -213,6 +223,10 @@ class Settings:
                 setattr(section_instance, f_info.name, value)
 
         settings.ui.home_shelves = max(1, min(25, settings.ui.home_shelves))
+        settings.playback.history_min_listen_seconds = max(
+            0,
+            min(MAX_HISTORY_MIN_LISTEN_SECONDS, settings.playback.history_min_listen_seconds),
+        )
 
         return settings
 

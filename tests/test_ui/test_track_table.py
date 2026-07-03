@@ -111,3 +111,23 @@ async def test_selected_original_index_maps_through_sort_and_filter():
         table._filter_text = "no-match"
         table._execute_filter()
         assert table.selected_original_index is None
+
+
+async def test_apply_filter_keeps_filter_active_truthful():
+    """load_tracks resets _filter_active; a programmatic apply_filter (the
+    background-refresh reapply path) must restore it so append_tracks keeps
+    honouring the active filter."""
+
+    class _WithTable(_Host):
+        def compose(self) -> ComposeResult:
+            yield TrackTable(show_index=True, show_album=False)
+
+    app = _WithTable()
+    async with app.run_test():
+        table = app.query_one(TrackTable)
+        table.load_tracks([{"video_id": "t1", "title": "a", "artist": "A", "duration": 60}])
+        assert table._filter_active is False
+        table.apply_filter("a")
+        assert table._filter_active is True
+        table.apply_filter("")
+        assert table._filter_active is False

@@ -60,6 +60,29 @@ def get_video_id(track: dict) -> str:
     return track.get("videoId", "") or track.get("video_id", "")
 
 
+# Fallback pattern for a view-count run like "358K views" / "3.8M views" /
+# "1,234 views", used only when the track carries no ``views`` field.
+_VIEW_COUNT_RE = re.compile(r"^[\d.,]+\s*[KMB]?\s*views$", re.IGNORECASE)
+
+
+def _is_view_count_run(entry: object, views: str | None = None) -> bool:
+    """True if an ``artists`` entry is YT Music's view-count pseudo-artist.
+
+    Video-type entries from ``get_history()`` / ``get_watch_playlist()`` append
+    a run like ``{"name": "358K views", "id": null}`` to the artists list. Real
+    artists always carry an ``id``, so we only ever treat an ``id``-less dict
+    run as a candidate — then confirm it by exact equality with the track's
+    (localized) ``views`` field, or a view-count pattern when that's absent.
+    This can't drop a real (id-bearing) artist or a plain-string entry.
+    """
+    if not isinstance(entry, dict) or entry.get("id") is not None:
+        return False
+    name = entry.get("name") or ""
+    if views:
+        return name == views
+    return bool(_VIEW_COUNT_RE.match(name.strip()))
+
+
 def extract_artist(track: dict) -> str:
     """Extract display-friendly artist string from a track dict."""
     artist = track.get("artist")
@@ -67,8 +90,16 @@ def extract_artist(track: dict) -> str:
         return artist
     artists = track.get("artists")
     if isinstance(artists, list) and artists:
-        names = [a.get("name", "") if isinstance(a, dict) else str(a) for a in artists]
-        return ", ".join(n for n in names if n)
+        views = track.get("views")
+        names = []
+        for a in artists:
+            if _is_view_count_run(a, views):
+                continue
+            name = a.get("name", "") if isinstance(a, dict) else str(a)
+            if name:
+                names.append(name)
+        if names:
+            return ", ".join(names)
     return "Unknown"
 
 
@@ -116,6 +147,13 @@ def normalize_tracks(raw_tracks: list[dict]) -> list[dict]:
             continue
         title = t.get("title", "Unknown")
         artist = extract_artist(t)
+        # Strip the view-count pseudo-artist from video entries so downstream
+        # consumers (artist navigation, radio seeds) don't treat it as one.
+        raw_artists = t.get("artists")
+        views = t.get("views")
+        artists = []
+        if isinstance(raw_artists, list):
+            artists = [a for a in raw_artists if not _is_view_count_run(a, views)]
         album_info = t.get("album")
         album = album_info.get("name", "") if isinstance(album_info, dict) else (album_info or "")
         album_id = album_info.get("id") if isinstance(album_info, dict) else t.get("album_id")
@@ -134,7 +172,7 @@ def normalize_tracks(raw_tracks: list[dict]) -> list[dict]:
                 "video_id": video_id,
                 "title": title,
                 "artist": artist,
-                "artists": t.get("artists", []),
+                "artists": artists,
                 "album": album,
                 "album_id": album_id,
                 "duration": duration,

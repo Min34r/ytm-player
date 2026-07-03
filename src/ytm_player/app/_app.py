@@ -22,7 +22,7 @@ from ytm_player.app._ipc import IPCMixin
 from ytm_player.app._keys import KeyHandlingMixin
 from ytm_player.app._mpris import MPRISMixin
 from ytm_player.app._navigation import PAGE_NAMES, NavigationMixin
-from ytm_player.app._playback import PlaybackMixin
+from ytm_player.app._playback import PlaybackMixin, _LocalHistoryClaim
 from ytm_player.app._session import SessionMixin
 from ytm_player.app._sidebar import SidebarMixin
 from ytm_player.app._track_actions import TrackActionsMixin
@@ -263,6 +263,18 @@ class YTMPlayerApp(
         # Cross-track supersede counter: each committed play_track call
         # bumps it; older in-flight calls abort at their next check.
         self._play_generation: int = 0
+        # Play generation already reported to the YT Music account history,
+        # so each play is reported at most once. -1 = nothing reported yet.
+        self._ytm_reported_generation: int = -1
+        # Ownership token for the current play's local-history row. One
+        # object per play; the report timer chain, insert worker and finalize
+        # share it — see _playback._LocalHistoryClaim.
+        self._local_history_claim: _LocalHistoryClaim | None = None
+        # App-level cache of the normalized YT Music account history (the
+        # Recently Played "YT Music" tab). Persists across page navigation so
+        # we don't refetch on every visit, and is optimistically prepended to
+        # when a play is reported. None = not fetched yet this session.
+        self._ytm_history: list[dict] | None = None
         # Makes the generation check + mpv play command atomic.
         self._play_lock = asyncio.Lock()
 

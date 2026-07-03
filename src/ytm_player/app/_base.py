@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
     from textual.app import App
 
+    from ytm_player.app._playback import _LocalHistoryClaim
     from ytm_player.config.keymap import KeyMap
     from ytm_player.config.settings import Settings
     from ytm_player.ipc import IPCServer
@@ -108,6 +109,9 @@ if TYPE_CHECKING:
         _last_play_video_id: str
         _last_play_time: float
         _play_generation: int
+        _ytm_reported_generation: int
+        _local_history_claim: _LocalHistoryClaim | None
+        _ytm_history: list[dict] | None
         _play_lock: asyncio.Lock
 
         # ── Pending resume from prior session ──────────────────────────

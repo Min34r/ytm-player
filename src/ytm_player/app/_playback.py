@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from ytm_player.app._base import YTMHostBase
@@ -16,6 +17,42 @@ from ytm_player.utils.formatting import get_video_id, normalize_tracks
 logger = logging.getLogger(__name__)
 
 _MAX_CONSECUTIVE_FAILURES = 5
+
+# Poll player.position with a timer instead of relying on UI position events:
+# timers keep firing when the terminal window loses focus, while position stays
+# frozen during pause. Best of both: focus-independent, pause-aware.
+_YTM_HISTORY_POLL_SECONDS = 1.0
+
+# Cap for the optimistic YT Music history cache — matches the row cap the
+# Recently Played page renders (RecentlyPlayedPage._MAX_TRACKS).
+_YTM_HISTORY_MAX = 100
+
+
+@dataclass
+class _LocalHistoryClaim:
+    """Ownership token for one play's local-history row.
+
+    One object per committed play — a same-video replay gets a fresh object,
+    so identity comparison can never alias two plays. The report timer chain,
+    the insert worker, and finalize all hold the same object; the only shared
+    app state is ``app._local_history_claim`` (which play is *current*), and
+    only scheduling/replacement writes it.
+    """
+
+    video_id: str
+    track: dict
+    generation: int
+    # SQLite row id once the insert worker lands it. None while the worker is
+    # in flight (or if the insert failed).
+    row_id: int | None = None
+    # Final listen duration stashed by finalize while the insert worker is in
+    # flight; the worker applies it once the row exists.
+    pending_seconds: int | None = None
+    # The report chain handed this play to the insert worker.
+    insert_started: bool = False
+    # A finalize consumed this claim: stops the report chain and blocks a
+    # second finalize from double-logging.
+    finalized: bool = False
 
 
 class PlaybackMixin(YTMHostBase):
@@ -160,6 +197,13 @@ class PlaybackMixin(YTMHostBase):
 
         if generation != self._play_generation:
             return
+
+        # Only arm history reporting when the load actually started: play()
+        # swallows load failures (clears current_track, dispatches ERROR with
+        # no app-side handler), so reaching here doesn't mean playback is on.
+        if self.player.current_track is not None:
+            self._schedule_local_history_log(track, video_id, generation)
+            self._schedule_ytm_history_report(track, video_id, generation)
 
         # Apply pending resume position if this play matches the resumed track.
         # Only clear on a match — if the user plays a different track first,
@@ -381,10 +425,21 @@ class PlaybackMixin(YTMHostBase):
         self._advancing = True
         logger.debug("Track ended (event=%s), advancing to next", event)
         try:
+            ended_track = event.get("track") if isinstance(event, dict) else None
+            # A new play can commit between this end event and the callback
+            # running (Player clears current_track BEFORE dispatching, so it
+            # can only be non-None again if play() ran since). The whole
+            # event is then stale: finalizing could consume the new play's
+            # claim (same-video replay) or log with its position — while a
+            # natural-EOF finalize writes nothing anyway (mpv reads position
+            # 0.0 once idle) — and advancing would skip straight over the
+            # track that is already playing.
+            if self.player and self.player.current_track is not None:
+                logger.debug("Ignoring stale track-end; a newer play is already current")
+                return
             # Log listen time using the ended track passed in the event,
             # since player.current_track is already None by the time this
             # callback runs.
-            ended_track = event.get("track") if isinstance(event, dict) else None
             if ended_track:
                 await self._log_listen_for(ended_track)
             await self._play_next(ended_track=ended_track)
@@ -637,17 +692,267 @@ class PlaybackMixin(YTMHostBase):
         """
         if not self.history or not self.player:
             return
+        await self._log_local_listen(track)
+
+    async def _log_local_listen(self, track: dict) -> None:
+        """Insert or finalize the local SQLite history row for this play."""
+        if not self.history or not self.player:
+            return
+
+        video_id = get_video_id(track)
+        claim = self._local_history_claim
+        # Only a claim for THIS video belongs to the play being finalized; on
+        # a mismatch another play owns it — leave it alone and direct-log.
+        owned = claim if claim is not None and claim.video_id == video_id else None
+        if owned is not None:
+            if owned.finalized:
+                # Already finalized (duplicate end-file or a concurrent
+                # supersede) — a second write would duplicate the row.
+                return
+            # Consume before any await: stops the report timer chain and
+            # blocks a concurrent finalize. Same-video replays get a fresh
+            # claim object, so a consumed claim can't swallow a later play.
+            owned.finalized = True
 
         listened = int(self.player.position - self._track_start_position)
-        if listened > 0:
-            try:
+        if listened <= 0:
+            # Nothing to write (mpv reads position 0.0 once idle, so natural
+            # EOF lands here) — but the claim above is already consumed: a
+            # replay of the same video must get its own row, not merge into
+            # this one.
+            return
+        try:
+            if owned is not None and owned.row_id is not None:
+                await self.history.update_play_listened_seconds(owned.row_id, listened)
+            elif owned is not None and owned.insert_started:
+                # Insert worker in flight: hand off the final duration for it
+                # to apply once the row exists. If the worker is already dead
+                # (insert failed, or cancelled at quit) this is a no-op — the
+                # row keeps its threshold-time value rather than risking a
+                # duplicate from a blind direct log.
+                owned.pending_seconds = listened
+            else:
                 await self.history.log_play(
                     track=track,
                     listened_seconds=listened,
                     source="tui",
+                    min_listen_seconds=self._history_min_listen_seconds(),
                 )
-            except Exception:
-                logger.exception("Failed to log play history")
+        except Exception:
+            logger.exception("Failed to log play history")
+
+    def _history_min_listen_seconds(self) -> int:
+        """Configured minimum seconds before a play counts instead of a skip."""
+        value = self.settings.playback.history_min_listen_seconds
+        return max(0, int(value))
+
+    def _history_timer_delay(self) -> float:
+        """Initial arm delay for the report timers.
+
+        Mirrors the listen threshold, but never returns 0: a threshold of 0
+        "count any playback" is valid gating, yet ``set_timer(0)`` triggers a
+        ZeroDivisionError inside Textual's timer. Fall back to the poll
+        interval so the first check still runs promptly.
+        """
+        return max(float(self._history_min_listen_seconds()), _YTM_HISTORY_POLL_SECONDS)
+
+    def _schedule_local_history_log(self, track: dict, video_id: str, generation: int) -> None:
+        """Insert the current play into SQLite once it crosses the threshold."""
+        if not self.history or not video_id:
+            return
+        claim = _LocalHistoryClaim(video_id=video_id, track=dict(track), generation=generation)
+        self._local_history_claim = claim
+        self.set_timer(
+            self._history_timer_delay(),
+            lambda: self._report_local_play(claim),
+        )
+
+    def _report_local_play(self, claim: _LocalHistoryClaim, idle_polls: int = 0) -> None:
+        # Identity is the liveness check: every committed play replaces
+        # ``_local_history_claim`` and finalize marks the claim consumed;
+        # either ends this chain. We deliberately do NOT gate on
+        # player.current_track — on natural advance a duplicate mpv end-file
+        # can transiently clear current_track while the track keeps playing,
+        # which would otherwise drop the play from history.
+        if claim is not self._local_history_claim or claim.finalized:
+            return
+        if not self.history or not self.player:
+            return
+        listened = int(self.player.position - self._track_start_position)
+        if listened <= self._history_min_listen_seconds():
+            # End the chain once the player is idle for two consecutive
+            # polls: stream errors, stop and end-of-queue never bump the
+            # generation or replace the claim, so nothing else would stop it.
+            # Two polls (not one) so the transient current_track clear from a
+            # duplicate end-file on natural advance can't kill a live chain.
+            if self.player.current_track is None:
+                if idle_polls + 1 >= 2:
+                    return
+                next_idle = idle_polls + 1
+            else:
+                next_idle = 0
+            self.set_timer(
+                _YTM_HISTORY_POLL_SECONDS,
+                lambda: self._report_local_play(claim, next_idle),
+            )
+            return
+        claim.insert_started = True
+        self.run_worker(
+            self._insert_local_history_play(claim, listened),
+            group="local-history-report",
+        )
+
+    async def _insert_local_history_play(self, claim: _LocalHistoryClaim, listened: int) -> None:
+        # The play already crossed the listen threshold when this worker was
+        # scheduled — the row is earned no matter what happened since (skip,
+        # same-video replay, newer claim). Insert unconditionally; this
+        # worker only ever writes fields of its own claim object, so it
+        # cannot clobber a newer play's state.
+        if not self.history:
+            return
+        try:
+            play_id = await self.history.log_play(
+                claim.track,
+                listened,
+                source="tui",
+                min_listen_seconds=self._history_min_listen_seconds(),
+            )
+        except Exception:
+            logger.exception("Failed to log play history")
+            play_id = None
+        claim.row_id = play_id
+        if play_id is None:
+            return
+        # Finalize may have stashed the final duration while the insert was
+        # in flight. No await sits between publishing row_id above and
+        # reading pending_seconds here, so a finalize either already saw
+        # row_id (and updated the row itself) or its stash is visible now.
+        pending = claim.pending_seconds
+        if pending is not None:
+            claim.pending_seconds = None
+            if pending > listened:
+                try:
+                    await self.history.update_play_listened_seconds(play_id, pending)
+                except Exception:
+                    logger.exception("Failed to finalize play history")
+            return
+        # Reflect it live only if this play is still current (generation, not
+        # current_track, which a duplicate end-file can transiently clear).
+        if claim.generation == self._play_generation:
+            self._optimistic_local_history_add(claim.track)
+
+    def _optimistic_local_history_add(self, track: dict) -> None:
+        """Prepend the just-logged play to the Local tab if it is open.
+
+        The local cache is per-page (cheap SQLite reads), so this only
+        matters while the Recently Played page is mounted on the Local tab.
+        """
+        from ytm_player.ui.pages.recently_played import _TAB_LOCAL, RecentlyPlayedPage
+
+        page = self._get_current_page()
+        if isinstance(page, RecentlyPlayedPage):
+            page.optimistic_add(_TAB_LOCAL, track)
+
+    def _schedule_ytm_history_report(self, track: dict, video_id: str, generation: int) -> None:
+        """Arm focus-independent history reporting for the current play.
+
+        Position events can stop reaching the app when the terminal loses
+        focus even though mpv keeps playing. A timer avoids that: poll
+        ``player.position`` until the same play crosses the threshold. Skips
+        are ignored because play generation changes.
+        """
+        if not self.settings.playback.sync_history_to_ytmusic:
+            return
+        if not self.ytmusic or not video_id:
+            return
+        self.set_timer(
+            self._history_timer_delay(),
+            lambda: self._report_ytm_play(track, video_id, generation),
+        )
+
+    def _report_ytm_play(
+        self, track: dict, video_id: str, generation: int, idle_polls: int = 0
+    ) -> None:
+        """Timer callback: report the play if it is still current.
+
+        Best-effort and non-blocking. If playback started late or was paused,
+        ``position`` may still be below threshold when the timer fires; in that
+        case keep polling. This means pause does not count, but reporting still
+        works without window focus.
+        """
+        if generation != self._play_generation:
+            return
+        if self._ytm_reported_generation == generation:
+            return
+        if not self.settings.playback.sync_history_to_ytmusic or not self.ytmusic:
+            return
+        if not self.player:
+            return
+        # Measure listen time relative to where this track started, not the
+        # raw player position. On resume-on-launch the track starts mid-file
+        # (``_track_start_position`` > 0), so a bare ``position`` check would
+        # report the play immediately even if the user only heard a second.
+        listened = int(self.player.position - self._track_start_position)
+        if listened <= self._history_min_listen_seconds():
+            # Same stable-idle termination as _report_local_play: two
+            # consecutive idle polls end the chain; one may be the transient
+            # duplicate-end-file clear.
+            if self.player.current_track is None:
+                if idle_polls + 1 >= 2:
+                    return
+                next_idle = idle_polls + 1
+            else:
+                next_idle = 0
+            self.set_timer(
+                _YTM_HISTORY_POLL_SECONDS,
+                lambda: self._report_ytm_play(track, video_id, generation, next_idle),
+            )
+            return
+        self.run_worker(
+            self._push_ytm_history_report(track, video_id, generation),
+            group="ytm-history-report",
+        )
+
+    async def _push_ytm_history_report(self, track: dict, video_id: str, generation: int) -> None:
+        """Report the play; reflect it in the tab only if the server took it.
+
+        ``add_history_item`` is best-effort and returns False on any failure
+        (expired auth, missing playbackTracking, non-204) without raising —
+        marking the play reported or prepending it to the tab cache on
+        failure would show rows the account history never accepted.
+        """
+        if not self.ytmusic:
+            return
+        if not await self.ytmusic.add_history_item(video_id):
+            return
+        self._ytm_reported_generation = generation
+        self._optimistic_ytm_history_add(track, video_id)
+
+    def _optimistic_ytm_history_add(self, track: dict, video_id: str) -> None:
+        """Prepend the just-reported play to the cached YT Music history.
+
+        Keeps the "YT Music" tab in sync without a fresh ``get_history()``:
+        drops any existing entry for the same track and inserts the current
+        one at the top (most-recent-first), matching the server's own dedup.
+        No-op until the tab has been fetched at least once (``_ytm_history``
+        is None); the first visit then fetches the real server list. If the
+        Recently Played page is showing YT Music, it refreshes live.
+        """
+        cache = self._ytm_history
+        if cache is None:
+            return
+        if not track:
+            return
+        entry = dict(track)
+        self._ytm_history = [entry] + [t for t in cache if get_video_id(t) != video_id]
+        del self._ytm_history[_YTM_HISTORY_MAX:]
+
+        # If the Recently Played page is open on the YT Music tab, reflect it live.
+        from ytm_player.ui.pages.recently_played import _TAB_YTM, RecentlyPlayedPage
+
+        page = self._get_current_page()
+        if isinstance(page, RecentlyPlayedPage):
+            page._refresh_tab_from_cache(_TAB_YTM)
 
     # ── Like toggle ──────────────────────────────────────────────────
 

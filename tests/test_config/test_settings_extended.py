@@ -5,6 +5,7 @@ import sys
 import pytest
 
 from ytm_player.config.settings import (
+    DEFAULT_HISTORY_MIN_LISTEN_SECONDS,
     DiscordSettings,
     LastFMSettings,
     LyricsSettings,
@@ -20,16 +21,21 @@ class TestPhase1Fields:
     def test_api_timeout_default(self):
         assert PlaybackSettings().api_timeout == 15
 
+    def test_history_min_listen_default(self):
+        assert PlaybackSettings().history_min_listen_seconds == DEFAULT_HISTORY_MIN_LISTEN_SECONDS
+
     def test_gapless_round_trip(self, tmp_config_dir):
         path = tmp_config_dir / "config.toml"
         s = Settings()
         s.playback.gapless = False
         s.playback.api_timeout = 30
+        s.playback.history_min_listen_seconds = 30
         s.save(path)
 
         loaded = Settings.load(path)
         assert loaded.playback.gapless is False
         assert loaded.playback.api_timeout == 30
+        assert loaded.playback.history_min_listen_seconds == 30
 
 
 class TestPhase2Fields:

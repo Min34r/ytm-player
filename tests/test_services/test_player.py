@@ -518,6 +518,45 @@ class TestDispatchBridge:
         await asyncio.sleep(0.05)
         assert received == [{"x": 1}]
 
+    async def test_set_event_loop_captures_dispatch_context(self, player):
+        """The context is snapshotted so callbacks inherit Textual's active_app;
+        without it, timers/workers they spawn raise LookupError and never fire."""
+        import contextvars
+
+        player.set_event_loop(asyncio.get_running_loop())
+        assert isinstance(player._dispatch_context, contextvars.Context)
+
+    async def test_dispatch_runs_callbacks_in_captured_context(self, player):
+        """When dispatched from mpv's thread (where the ContextVar is NOT set),
+        the callback must still see the value captured at set_event_loop time.
+        This is the mechanism that keeps Textual's active_app available so the
+        timers/workers spawned by _on_track_end fire on auto-advance.
+        """
+        import contextvars
+        import threading
+
+        from ytm_player.services.player import PlayerEvent
+
+        marker: contextvars.ContextVar[str] = contextvars.ContextVar("marker")
+        marker.set("present")
+        loop = asyncio.get_running_loop()
+        player.set_event_loop(loop)  # snapshots context (marker=present)
+
+        seen: list = []
+        done = asyncio.Event()
+
+        async def acb(_v):
+            seen.append(marker.get("absent"))
+            loop.call_soon_threadsafe(done.set)
+
+        player.on(PlayerEvent.TRACK_END, acb)
+
+        # Dispatch from a separate thread, mirroring mpv's callback thread,
+        # where the marker ContextVar was never set.
+        threading.Thread(target=lambda: player._dispatch(PlayerEvent.TRACK_END, {})).start()
+        await asyncio.wait_for(done.wait(), timeout=1)
+        assert seen == ["present"]
+
     async def test_callback_exception_is_isolated(self, player, caplog):
         from ytm_player.services.player import PlayerEvent
 

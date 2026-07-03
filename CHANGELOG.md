@@ -10,6 +10,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 **New features**
 
+- **Recently Played — YT Music account history tab** — the Recently Played page now has two tabs: **Local** (the existing SQLite play history recorded inside this app) and **YT Music** (your account-wide play history fetched from the server via ytmusicapi `get_history()`). Switch tabs by clicking the labels or with the keyboard (`Tab` / `Shift+Tab` to focus a tab label, `Enter` to activate) — consistent with the Browse page. Each tab is cached so switching back doesn't refetch; re-clicking the active tab does a hard refresh (Local re-reads SQLite, YT Music refetches the server). Both tabs are capped at 100 rows to keep the TUI responsive, and a just-played track is added to the open tab optimistically. `[▶ Start Radio]` and filtering work on both. No new keybinding — both views live under `g r`.
+- **Plays sync to your YouTube Music history** — tracks played in the TUI are now reported back to your YT Music account (via `add_history_item()`), so they show up in your history and feed recommendations like any other client. Fired best-effort in the background so it never blocks playback. Opt-out via `playback.sync_history_to_ytmusic = false`.
+- **Configurable listen threshold** — `playback.history_min_listen_seconds` (default 5) sets how long a track must play before it counts as a play instead of a skip, for both local history and the YT Music account sync. Clamped to 0–3600; `0` counts any playback.
 - **Play Next, everywhere** — press `X` (or `Ctrl+X`) on any page to slot the focused track in right after the current one. Albums and playlists get a "Play Next" entry in their context menus too, inserting the whole set in order — shuffle-aware, so they still play next even with shuffle on.
 
 **Changes**

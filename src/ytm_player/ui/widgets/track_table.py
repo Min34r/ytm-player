@@ -706,6 +706,7 @@ class TrackTable(DataTable):
     def apply_filter(self, query: str) -> None:
         """Filter visible rows by query. Empty string restores all tracks."""
         self._filter_text = query.strip().lower()
+        self._filter_active = bool(self._filter_text)
         if self._filter_timer is not None:
             try:
                 self._filter_timer.stop()

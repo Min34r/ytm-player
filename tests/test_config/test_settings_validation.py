@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from ytm_player.config.settings import Settings
+from ytm_player.config.settings import MAX_HISTORY_MIN_LISTEN_SECONDS, Settings
 
 
 def test_cache_location_is_expanduser(tmp_config_dir):
@@ -58,6 +58,15 @@ def test_valid_values_still_load(tmp_config_dir):
     assert s.playback.default_volume == 55
     assert s.playback.gapless is False
     assert s.ui.theme == "textual-dark"
+
+
+def test_history_min_listen_seconds_allows_zero_and_clamps_high(tmp_config_dir):
+    path = tmp_config_dir / "config.toml"
+    path.write_text("[playback]\nhistory_min_listen_seconds = 0\n", encoding="utf-8")
+    assert Settings.load(path).playback.history_min_listen_seconds == 0
+
+    path.write_text("[playback]\nhistory_min_listen_seconds = 99999\n", encoding="utf-8")
+    assert Settings.load(path).playback.history_min_listen_seconds == MAX_HISTORY_MIN_LISTEN_SECONDS
 
 
 def test_union_field_accepts_str_and_list(tmp_config_dir):

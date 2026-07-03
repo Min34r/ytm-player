@@ -1023,10 +1023,50 @@ class YTMusicService:
     # History
     # ------------------------------------------------------------------
 
-    async def get_history(self) -> list[dict[str, Any]]:
-        """Return the user's recently played tracks."""
+    async def get_history(self) -> list[dict[str, Any]] | None:
+        """Return the user's recently played tracks.
+
+        Returns ``None`` on failure (auth expired, network, server error) so
+        callers can distinguish a genuine empty history from an error without
+        relying on shared service state. An empty list means the account has
+        no history.
+        """
         try:
             return await self._call(self.client.get_history)
         except Exception:
             logger.exception("get_history failed")
-            return []
+            return None
+
+    async def add_history_item(self, video_id: str) -> bool:
+        """Register a play in the account's YouTube Music history.
+
+        ytmusicapi requires the ``playbackTracking`` payload from
+        ``get_song()`` and that both calls use the same client instance;
+        both go through ``self.client`` here, so that holds. Best-effort:
+        any failure is logged and swallowed (returns ``False``) so callers
+        can fire-and-forget without affecting playback.
+
+        Returns ``True`` when the server accepts the report (HTTP 204).
+        """
+        if not video_id:
+            return False
+        # ``add_history_item`` needs the ``playbackTracking`` payload, which is
+        # only available from ``get_song``. There is no combined endpoint, so
+        # one extra round trip per reported play is unavoidable.
+        try:
+            song = await self._call(self.client.get_song, video_id)
+        except Exception:
+            logger.exception("get_song failed for %r", video_id)
+            return False
+        # Unavailable / non-playable tracks come back without playbackTracking;
+        # skip explicitly instead of letting a KeyError surface as a generic
+        # "add_history_item failed".
+        if not isinstance(song, dict) or "playbackTracking" not in song:
+            logger.debug("add_history_item: no playbackTracking for %r; skipping", video_id)
+            return False
+        try:
+            resp = await self._call(self.client.add_history_item, song)
+        except Exception:
+            logger.exception("add_history_item failed for %r", video_id)
+            return False
+        return getattr(resp, "status_code", None) == 204

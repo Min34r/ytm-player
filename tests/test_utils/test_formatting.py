@@ -168,6 +168,29 @@ class TestExtractArtist:
         track = {"artists": ["Artist A", "Artist B"]}
         assert extract_artist(track) == "Artist A, Artist B"
 
+    def test_drops_view_count_pseudo_artist(self):
+        # get_history() video entries append a "358K views" run to artists.
+        track = {
+            "artists": [{"name": "CHRSTPHR", "id": "UC"}, {"name": "358K views", "id": None}],
+            "views": "358K views",
+        }
+        assert extract_artist(track) == "CHRSTPHR"
+
+    def test_drops_view_count_variants(self):
+        for views in ("3.8M views", "1,234 views", "12 views", "1B views"):
+            track = {"artists": [{"name": "Real"}, {"name": views, "id": None}]}
+            assert extract_artist(track) == "Real", views
+
+    def test_all_views_falls_back_to_unknown(self):
+        track = {"artists": [{"name": "500K views", "id": None}]}
+        assert extract_artist(track) == "Unknown"
+
+    def test_keeps_id_bearing_artist_even_if_it_matches_pattern(self):
+        # Only id-less runs are view-count candidates; a real (id-bearing)
+        # artist must never be dropped, even if its name matches the pattern.
+        track = {"artists": [{"name": "100 views", "id": "UC123"}]}
+        assert extract_artist(track) == "100 views"
+
 
 # ── extract_duration ─────────────────────────────────────────────────
 
@@ -295,6 +318,21 @@ class TestNormalizeTracks:
     def test_album_none(self):
         result = normalize_tracks([{"videoId": "x", "album": None}])
         assert result[0]["album"] == ""
+
+    def test_strips_view_count_from_artists_list(self):
+        raw = [
+            {
+                "videoId": "x",
+                "artists": [
+                    {"name": "CHRSTPHR", "id": "UC"},
+                    {"name": "358K views", "id": None},
+                ],
+                "views": "358K views",
+            }
+        ]
+        result = normalize_tracks(raw)
+        assert result[0]["artist"] == "CHRSTPHR"
+        assert [a["name"] for a in result[0]["artists"]] == ["CHRSTPHR"]
 
     def test_is_video_true(self):
         result = normalize_tracks([{"videoId": "x", "isVideo": True}])

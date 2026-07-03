@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import locale
 import logging
 import os
@@ -177,6 +178,13 @@ class Player:
             event: [] for event in PlayerEvent
         }
         self._loop: asyncio.AbstractEventLoop | None = None
+        # Context (captured when the loop is set, i.e. inside the running
+        # Textual app) used to dispatch callbacks. Without it, callbacks
+        # scheduled from mpv's thread run without Textual's ``active_app``
+        # ContextVar, so any ``set_timer`` / ``run_worker`` they create
+        # (e.g. history reporting on auto-advance) raises LookupError and
+        # never fires. See set_event_loop / _dispatch.
+        self._dispatch_context: contextvars.Context | None = None
         # Counter for end-file events to ignore.  Incremented when we
         # intentionally replace/stop a track (so the resulting end-file
         # from mpv doesn't trigger auto-advance).
@@ -303,8 +311,19 @@ class Player:
         return loop
 
     def set_event_loop(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Explicitly set the asyncio event loop for callback dispatch."""
+        """Explicitly set the asyncio event loop for callback dispatch.
+
+        Also snapshots the current contextvars context. This is called from
+        inside the running Textual app, so the snapshot carries Textual's
+        ``active_app`` ContextVar; dispatching callbacks within it lets the
+        timers/workers they spawn (history reporting, etc.) run correctly
+        even though the event originates on mpv's callback thread.
+        """
         self._loop = loop
+        try:
+            self._dispatch_context = contextvars.copy_context()
+        except Exception:
+            self._dispatch_context = None
 
     # ── Callback registration ───────────────────────────────────────
 
@@ -356,8 +375,14 @@ class Player:
         for cb in list(self._callbacks[event]):
             try:
                 if loop is not None and not loop.is_closed():
+                    ctx = self._dispatch_context
                     if asyncio.iscoroutinefunction(cb):
-                        loop.call_soon_threadsafe(_schedule_async, cb, args)
+                        if ctx is not None:
+                            loop.call_soon_threadsafe(_schedule_async, cb, args, context=ctx)
+                        else:
+                            loop.call_soon_threadsafe(_schedule_async, cb, args)
+                    elif ctx is not None:
+                        loop.call_soon_threadsafe(_safe_sync, cb, args, context=ctx)
                     else:
                         loop.call_soon_threadsafe(_safe_sync, cb, args)
                 else:

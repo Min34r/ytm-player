@@ -9,6 +9,7 @@ from pathlib import Path
 import aiosqlite
 
 from ytm_player.config.paths import HISTORY_DB, SECURE_FILE_MODE, secure_chmod
+from ytm_player.config.settings import DEFAULT_HISTORY_MIN_LISTEN_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +47,6 @@ CREATE TABLE IF NOT EXISTS play_stats (
     last_played TEXT
 );
 """
-
-# Minimum listen duration (seconds) before a play counts.
-_MIN_LISTEN_SECONDS = 5
 
 
 class HistoryManager:
@@ -177,14 +175,16 @@ class HistoryManager:
         track: dict,
         listened_seconds: int,
         source: str,
-    ) -> None:
+        *,
+        min_listen_seconds: int = DEFAULT_HISTORY_MIN_LISTEN_SECONDS,
+    ) -> int | None:
         """Record a track play event.
 
         Skips are ignored: the play is only logged when *listened_seconds*
         exceeds the minimum threshold.
         """
-        if listened_seconds <= _MIN_LISTEN_SECONDS:
-            return
+        if listened_seconds <= min_listen_seconds:
+            return None
 
         if self._db is None:
             raise RuntimeError("Database not initialized")
@@ -198,7 +198,7 @@ class HistoryManager:
         duration = extract_duration(track)
 
         try:
-            await self._db.execute(
+            cursor = await self._db.execute(
                 """
                 INSERT INTO play_history
                     (video_id, title, artist, album, duration_seconds,
@@ -224,8 +224,46 @@ class HistoryManager:
             )
 
             await self._db.commit()
+            return cursor.lastrowid
         except (OSError, sqlite3.Error) as exc:
             logger.exception("Failed to log play (video_id=%r)", video_id)
+            raise RuntimeError(f"Failed to write to history database: {exc}") from exc
+
+    async def update_play_listened_seconds(self, play_id: int, listened_seconds: int) -> None:
+        """Update an already-counted play with its final listen duration."""
+        if self._db is None:
+            raise RuntimeError("Database not initialized")
+
+        try:
+            async with self._db.execute(
+                "SELECT video_id, listened_seconds FROM play_history WHERE id = ?",
+                (play_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+            if row is None:
+                return
+
+            old_seconds = int(row["listened_seconds"] or 0)
+            if listened_seconds <= old_seconds:
+                return
+            delta = listened_seconds - old_seconds
+
+            await self._db.execute(
+                "UPDATE play_history SET listened_seconds = ? WHERE id = ?",
+                (listened_seconds, play_id),
+            )
+            await self._db.execute(
+                """
+                UPDATE play_stats
+                SET total_listened_seconds = total_listened_seconds + ?,
+                    last_played = datetime('now')
+                WHERE video_id = ?
+                """,
+                (delta, row["video_id"]),
+            )
+            await self._db.commit()
+        except (OSError, sqlite3.Error) as exc:
+            logger.exception("Failed to update play history row %r", play_id)
             raise RuntimeError(f"Failed to write to history database: {exc}") from exc
 
     async def get_play_history(self, limit: int = 100) -> list[dict]:

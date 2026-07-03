@@ -34,11 +34,13 @@ def _fresh_playback_host():
     p.lastfm = None
     p.mpris = None
     p.mac_media = None
+    p.ytmusic = None
     p.settings = MagicMock()
     p.settings.notifications.enabled = False
     p.notify = MagicMock()
     p.call_later = MagicMock()
     p.run_worker = MagicMock()
+    p.set_timer = MagicMock()
     # query_one raises — caught by play_track's try/except around UI updates
     p.query_one = MagicMock(side_effect=Exception("no widget in test"))
     p._last_play_video_id = None
@@ -49,6 +51,7 @@ def _fresh_playback_host():
     p._pending_resume_video_id = None
     p._pending_resume_position = 0.0
     p._play_generation = 0
+    p._local_history_claim = None
     p._play_lock = asyncio.Lock()
     return p
 
@@ -598,3 +601,79 @@ class TestCrossTrackRace:
         await task_a
 
         assert resolved == ["BBB"], "superseded call kept going after history log"
+
+
+class TestTrackEndFinalize:
+    async def test_stale_track_end_noops_when_new_play_current(self):
+        """A new play can commit between mpv's end-file event and this
+        callback running — the whole event is stale. Finalizing could
+        consume the new play's live claim (worst case: a same-video replay
+        dropped from history), and advancing would skip straight over the
+        track that is already playing."""
+        host = _fresh_playback_host()
+        host._log_listen_for = AsyncMock()
+        host._play_next = AsyncMock()
+        host.player.current_track = {"video_id": "new"}
+
+        await host._on_track_end({"track": {"video_id": "old"}})
+
+        host._log_listen_for.assert_not_awaited()
+        host._play_next.assert_not_awaited()
+        assert host._advancing is False
+
+    async def test_natural_track_end_finalizes_and_advances(self):
+        host = _fresh_playback_host()
+        host._log_listen_for = AsyncMock()
+        host._play_next = AsyncMock()
+        host.player.current_track = None
+
+        await host._on_track_end({"track": {"video_id": "old"}})
+
+        host._log_listen_for.assert_awaited_once_with({"video_id": "old"})
+        host._play_next.assert_awaited_once()
+
+
+class TestHistoryArming:
+    def _stream_info(self):
+        from ytm_player.services.stream import StreamInfo
+
+        return StreamInfo(
+            url="http://x",
+            video_id="abc",
+            format="opus",
+            bitrate=128,
+            duration=200,
+            expires_at=float("inf"),
+            thumbnail_url=None,
+        )
+
+    async def test_history_not_armed_when_play_load_fails(self):
+        """play() swallows load failures (current_track stays None); history
+        reporting must not be armed for a play that never started."""
+        host = _fresh_playback_host()
+        host.history = MagicMock()
+        host.settings.playback.sync_history_to_ytmusic = False
+        host.settings.playback.history_min_listen_seconds = 5
+        host.stream_resolver.resolve = AsyncMock(return_value=self._stream_info())
+        # player.play mock returns without setting current_track — load failed.
+        await host.play_track({"video_id": "abc", "title": "X"})
+
+        host.set_timer.assert_not_called()
+        assert host._local_history_claim is None
+
+    async def test_history_armed_when_play_starts(self):
+        host = _fresh_playback_host()
+        host.history = MagicMock()
+        host.settings.playback.sync_history_to_ytmusic = False
+        host.settings.playback.history_min_listen_seconds = 5
+        host.stream_resolver.resolve = AsyncMock(return_value=self._stream_info())
+        track = {"video_id": "abc", "title": "X"}
+
+        async def _play(url, t):
+            host.player.current_track = t
+
+        host.player.play = AsyncMock(side_effect=_play)
+        await host.play_track(track)
+
+        host.set_timer.assert_called_once()
+        assert host._local_history_claim is not None
