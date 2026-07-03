@@ -272,3 +272,35 @@ class TestMprisStatus:
 
         report = gather_diagnostics()
         assert "may already be fixed" in report
+
+
+class TestArgvIsYtm:
+    """The running-instance matcher must see real entry points and skip
+    bystanders (an editor with the repo open, say)."""
+
+    def test_console_script_launch(self):
+        # Console scripts run as `python /…/bin/ytm`: interpreter in argv[0],
+        # script path in argv[1]. This is the shape every pip/AUR install has.
+        from ytm_player.utils.doctor import _argv_is_ytm
+
+        assert _argv_is_ytm(["/home/u/.venv/bin/python3", "/home/u/.venv/bin/ytm"])
+
+    def test_bare_ytm(self):
+        from ytm_player.utils.doctor import _argv_is_ytm
+
+        assert _argv_is_ytm(["/usr/bin/ytm"])
+
+    def test_python_dash_m(self):
+        from ytm_player.utils.doctor import _argv_is_ytm
+
+        assert _argv_is_ytm(["/usr/bin/python3", "-m", "ytm_player"])
+
+    def test_editor_on_repo_is_not_ytm(self):
+        from ytm_player.utils.doctor import _argv_is_ytm
+
+        assert not _argv_is_ytm(["nvim", "/home/u/AI/ytm-player/src/ytm_player/cli.py"])
+
+    def test_unrelated_process(self):
+        from ytm_player.utils.doctor import _argv_is_ytm
+
+        assert not _argv_is_ytm(["/usr/bin/firefox", "--new-window"])

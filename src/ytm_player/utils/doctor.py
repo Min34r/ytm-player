@@ -98,6 +98,19 @@ def _mpris_status() -> str:
     )
 
 
+def _argv_is_ytm(argv: list[str]) -> bool:
+    """True when *argv* is a real ytm-player entry point.
+
+    Matches the `ytm` console script (which the kernel launches as
+    ``python /…/bin/ytm`` — interpreter in argv[0], script path in argv[1])
+    and ``python -m ytm_player``. Deliberately does NOT match unrelated
+    processes whose cmdline merely contains a path like /ytm-player or
+    …/ytm_player/… (e.g. an editor with the repo open).
+    """
+    head_names = [Path(a).name for a in argv[:2]]
+    return "ytm" in head_names or "ytm_player" in argv
+
+
 def _running_status() -> str:
     """Best-effort check whether a ytm TUI process is currently running.
 
@@ -120,10 +133,7 @@ def _running_status() -> str:
         argv = cmdline.split()
         if not argv:
             continue
-        # Match only the real entry points (the `ytm` script or
-        # `python -m ytm_player`), not unrelated processes whose cmdline
-        # merely contains a path like /ytm-player (e.g. an open editor).
-        if Path(argv[0]).name == "ytm" or "ytm_player" in argv:
+        if _argv_is_ytm(argv):
             try:
                 status = (entry / "status").read_text(encoding="utf-8", errors="replace")
             except OSError:
