@@ -185,9 +185,14 @@ class SearchResultPanel(Widget):
         """Handle right-click to emit ItemRightClicked."""
         if event.button == 3:
             event.stop()
-            self._right_click_pending = True
             idx = self._find_clicked_item_index(event)
             if idx is not None and 0 <= idx < len(self._items):
+                # Arm the suppress flag only when the right-click hit a real
+                # item: that click also fires a phantom ListView.Selected
+                # which on_list_view_selected must swallow. A right-click on
+                # empty space fires no Selected, so a lingering flag would
+                # eat the next legitimate selection instead.
+                self._right_click_pending = True
                 self.post_message(self.ItemRightClicked(self._items[idx], self.id or ""))
 
 
