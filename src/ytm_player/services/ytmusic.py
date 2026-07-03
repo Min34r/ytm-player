@@ -313,14 +313,19 @@ class YTMusicService:
 
     async def get_liked_songs(
         self, limit: int | None = None, timeout: int | None = None
-    ) -> list[dict[str, Any]]:
-        """Return tracks from the user's Liked Music playlist."""
+    ) -> list[dict[str, Any]] | None:
+        """Return tracks from the user's Liked Music playlist.
+
+        Returns ``None`` on failure (auth expired, network, server error) so
+        callers can distinguish a fetch failure from a genuinely empty
+        playlist — mirrors ``get_history``.
+        """
         try:
             playlist = await self._call(self.client.get_liked_songs, timeout=timeout, limit=limit)
             return playlist.get("tracks", []) if isinstance(playlist, dict) else []
         except Exception:
             logger.exception("get_liked_songs failed")
-            return []
+            return None
 
     # ------------------------------------------------------------------
     # Browsing

@@ -163,6 +163,22 @@ class TestGetLikedSongsTimeout:
             mc.assert_called_once_with(svc._ytm.get_liked_songs, timeout=None, limit=None)
 
 
+class TestGetLikedSongsFailure:
+    """A failed fetch must be distinguishable from an empty playlist."""
+
+    async def test_returns_none_on_failure(self):
+        svc = make_ytmusic_service()
+        with patch.object(
+            svc, "_call", new_callable=AsyncMock, side_effect=OSError("network down")
+        ):
+            assert await svc.get_liked_songs() is None
+
+    async def test_returns_empty_list_for_empty_playlist(self):
+        svc = make_ytmusic_service()
+        with patch.object(svc, "_call", new_callable=AsyncMock, return_value={"tracks": []}):
+            assert await svc.get_liked_songs() == []
+
+
 class TestLargePlaylistTimeout:
     """Test the _LARGE_PLAYLIST_TIMEOUT constant."""
 

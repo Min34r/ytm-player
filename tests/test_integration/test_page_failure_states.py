@@ -30,6 +30,7 @@ from textual.widget import Widget
 from textual.worker import Worker, WorkerState
 
 from ytm_player.ui.pages.context import ContextPage
+from ytm_player.ui.pages.liked_songs import LikedSongsPage
 from ytm_player.ui.pages.recently_played import _TAB_LOCAL, RecentlyPlayedPage
 
 
@@ -303,3 +304,73 @@ async def test_context_page_fetch_data_success_path_unaffected(
     result = await page._fetch_data()
     assert result == payload
     assert page._load_failed is False
+
+
+# ── liked_songs.py ──────────────────────────────────────────────────
+
+
+def _make_liked_songs_page() -> tuple["LikedSongsPage", dict[str, MagicMock]]:
+    page = LikedSongsPage()
+
+    loading = MagicMock(name="liked-loading")
+    table = MagicMock(name="liked-table")
+    table.row_count = 0
+
+    widgets: dict[str, MagicMock] = {
+        "#liked-loading": loading,
+        "#liked-table": table,
+    }
+
+    def fake_query_one(selector: str, _expected_type: type | None = None) -> MagicMock:
+        return widgets[selector]
+
+    object.__setattr__(page, "query_one", fake_query_one)
+    return page, widgets
+
+
+async def test_liked_songs_failure_shows_error_not_empty_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``get_liked_songs`` returns ``None`` on failure (it never raises —
+    graceful-degrade contract). The page must render the check-the-log
+    failure message, NOT the misleading "No liked songs found."."""
+    page, widgets = _make_liked_songs_page()
+
+    fake_ytmusic = MagicMock()
+    fake_ytmusic.get_liked_songs = AsyncMock(return_value=None)
+    fake_app = MagicMock()
+    fake_app.ytmusic = fake_ytmusic
+    _attach_fake_app(page, fake_app, monkeypatch)
+
+    await page._load_liked_songs()
+
+    assert page._load_failed is True
+    update_calls = [c.args[0] for c in widgets["#liked-loading"].update.call_args_list]
+    assert any("Couldn't load liked songs" in msg for msg in update_calls), (
+        f"loading label must show the failure message, got: {update_calls!r}"
+    )
+    assert not any("No liked songs found" in msg for msg in update_calls), (
+        f"loading label leaked the empty-state message on failure: {update_calls!r}"
+    )
+
+
+async def test_liked_songs_empty_playlist_shows_empty_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A genuinely empty Liked Music playlist ([]) keeps the friendly
+    empty-state copy."""
+    page, widgets = _make_liked_songs_page()
+
+    fake_ytmusic = MagicMock()
+    fake_ytmusic.get_liked_songs = AsyncMock(return_value=[])
+    fake_app = MagicMock()
+    fake_app.ytmusic = fake_ytmusic
+    _attach_fake_app(page, fake_app, monkeypatch)
+
+    await page._load_liked_songs()
+
+    assert page._load_failed is False
+    update_calls = [c.args[0] for c in widgets["#liked-loading"].update.call_args_list]
+    assert any("No liked songs found" in msg for msg in update_calls), (
+        f"loading label must show the empty-state message, got: {update_calls!r}"
+    )

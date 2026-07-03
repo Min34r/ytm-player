@@ -119,8 +119,10 @@ class LikedSongsPage(TrackFilterHost, Widget):
 
         try:
             raw_tracks = await ytmusic.get_liked_songs(limit=self._FIRST_BATCH)
-            tracks = normalize_tracks(raw_tracks)
-            self._load_failed = False
+            # The service returns None on failure (never raises) so an empty
+            # playlist and a failed fetch render different messages.
+            self._load_failed = raw_tracks is None
+            tracks = normalize_tracks(raw_tracks or [])
         except Exception:
             logger.exception("Failed to load liked songs")
             tracks = []
@@ -187,6 +189,12 @@ class LikedSongsPage(TrackFilterHost, Widget):
             )
         except Exception:
             logger.debug("Background fetch for remaining liked songs failed", exc_info=True)
+            self._update_footer()
+            return
+
+        if remaining_raw is None:
+            # Background top-up failed; keep the first batch we already show.
+            logger.debug("Background fetch for remaining liked songs failed")
             self._update_footer()
             return
 
