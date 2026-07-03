@@ -9,6 +9,7 @@ import logging
 from unittest.mock import AsyncMock, patch
 
 import ytm_player.services.macos_media as macos_media
+from ytm_player.services import _dispatch
 from ytm_player.services.macos_media import MacOSMediaService
 
 
@@ -137,6 +138,23 @@ class TestStart:
             await asyncio.sleep(0)
             callbacks["play"].assert_awaited_once()
             svc.stop()
+
+    async def test_start_captures_dispatch_context(self) -> None:
+        """start() runs on the loop thread and must snapshot its context so
+        dispatched Now-Playing callbacks keep Textual's active_app ContextVar."""
+        _reset_fake_media_player()
+        _dispatch._dispatch_context = None
+        svc = MacOSMediaService()
+        try:
+            with (
+                patch("ytm_player.services.macos_media._MEDIA_PLAYER_AVAILABLE", True),
+                patch("ytm_player.services.macos_media._MP", _FakeMediaPlayerModule),
+            ):
+                await svc.start({}, asyncio.get_running_loop())
+            assert _dispatch._dispatch_context is not None
+        finally:
+            svc.stop()
+            _dispatch._dispatch_context = None
 
 
 class TestNowPlayingUpdates:

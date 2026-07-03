@@ -11,7 +11,11 @@ import asyncio
 import logging
 from typing import Any
 
-from ytm_player.services._dispatch import PlayerCallback, dispatch_coro_threadsafe
+from ytm_player.services._dispatch import (
+    PlayerCallback,
+    capture_dispatch_context,
+    dispatch_coro_threadsafe,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +65,9 @@ class MediaKeysService:
 
         self._callbacks = callbacks
         self._loop = loop
+        # start() runs on the app's loop thread: snapshot its context so
+        # dispatched key callbacks keep Textual's active_app ContextVar.
+        capture_dispatch_context()
 
         # Suppress pynput's own "This process is not trusted!" warning —
         # we emit a friendlier message ourselves.

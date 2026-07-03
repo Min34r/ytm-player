@@ -13,7 +13,11 @@ import logging
 import threading
 from typing import Any
 
-from ytm_player.services._dispatch import PlayerCallback, dispatch_coro_threadsafe
+from ytm_player.services._dispatch import (
+    PlayerCallback,
+    capture_dispatch_context,
+    dispatch_coro_threadsafe,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +96,9 @@ class MacOSEventTapService:
 
         self._callbacks = callbacks
         self._loop = loop
+        # start() runs on the app's loop thread: snapshot its context so
+        # dispatched key callbacks keep Textual's active_app ContextVar.
+        capture_dispatch_context()
         self._ready.clear()
         self._thread = threading.Thread(target=self._run_tap_loop, daemon=True)
         self._thread.start()

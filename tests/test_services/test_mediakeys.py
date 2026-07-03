@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest  # noqa: F401 (used by pytest.fixture)
 
+from ytm_player.services import _dispatch
 from ytm_player.services.mediakeys import MediaKeysService
 
 # ── Helpers ─────────────────────────────────────────────────────────
@@ -92,6 +93,16 @@ class TestStartWithPynput:
     async def test_running(self):
         svc, _, _ = await _started_service()
         assert svc._running is True
+
+    async def test_start_captures_dispatch_context(self):
+        """start() runs on the loop thread and must snapshot its context so
+        dispatched key callbacks keep Textual's active_app ContextVar."""
+        _dispatch._dispatch_context = None
+        try:
+            await _started_service()
+            assert _dispatch._dispatch_context is not None
+        finally:
+            _dispatch._dispatch_context = None
 
     async def test_listener_started(self):
         svc, _, listener = await _started_service()

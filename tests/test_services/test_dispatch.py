@@ -1,11 +1,14 @@
 """Tests for the shared thread->loop coroutine dispatcher."""
 
 import asyncio
+import contextvars
 import logging
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from ytm_player.services import _dispatch
-from ytm_player.services._dispatch import dispatch_coro_threadsafe
+from ytm_player.services._dispatch import capture_dispatch_context, dispatch_coro_threadsafe
 
 
 async def test_holds_strong_task_ref_until_done():
@@ -55,3 +58,54 @@ def test_returns_false_when_loop_closed(caplog):
 
     assert result is False
     assert "Event loop closed" in caplog.text
+
+
+_ctx_var: contextvars.ContextVar[str] = contextvars.ContextVar("dispatch_test_var", default="unset")
+
+
+@pytest.fixture
+def _reset_dispatch_context():
+    _dispatch._dispatch_context = None
+    yield
+    _dispatch._dispatch_context = None
+
+
+async def test_dispatch_applies_captured_context(_reset_dispatch_context):
+    """The callback's task must run inside the context captured on the loop
+    thread. Without it, call_soon_threadsafe uses the OS thread's empty
+    context, Textual's active_app ContextVar is unset, and any timers or
+    workers the callback arms (history reporting) die with LookupError."""
+    _ctx_var.set("app-context")
+    capture_dispatch_context()  # snapshot on the loop thread, like start()
+
+    seen: list[str] = []
+    done = asyncio.Event()
+
+    async def cb() -> None:
+        seen.append(_ctx_var.get())
+        done.set()
+
+    loop = asyncio.get_running_loop()
+    # Dispatch from a real foreign thread, like a pynput/Quartz key event.
+    await asyncio.to_thread(dispatch_coro_threadsafe, loop, cb)
+    await asyncio.wait_for(done.wait(), timeout=1)
+
+    assert seen == ["app-context"]
+
+
+async def test_dispatch_without_capture_uses_default_context(_reset_dispatch_context):
+    """No snapshot captured (services never started): dispatch still works,
+    the callback just runs in the scheduling thread's default context."""
+    assert _dispatch._dispatch_context is None
+    done = asyncio.Event()
+    seen: list[str] = []
+
+    async def cb() -> None:
+        seen.append(_ctx_var.get())
+        done.set()
+
+    loop = asyncio.get_running_loop()
+    await asyncio.to_thread(dispatch_coro_threadsafe, loop, cb)
+    await asyncio.wait_for(done.wait(), timeout=1)
+
+    assert seen == ["unset"]

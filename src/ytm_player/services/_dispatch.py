@@ -16,6 +16,7 @@ platform-guard test.  The type alias needs only ``collections.abc``.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
@@ -31,6 +32,29 @@ PlayerCallback = Callable[..., Coroutine[Any, Any, None]]
 # Strong references to in-flight dispatched tasks so the GC can't collect them
 # before they finish (asyncio only holds a weak reference to a bare task).
 _pending_tasks: set[asyncio.Task[Any]] = set()
+
+# Context snapshot from the app's loop thread. ``call_soon_threadsafe`` runs
+# its callback in the CALLING thread's (empty) context, so tasks spawned for
+# media-key events would lose Textual's ``active_app`` ContextVar — any
+# timers/workers the callback arms (history reporting, etc.) then die with
+# LookupError. The platform services capture this when they take their loop
+# reference (on the loop thread); every dispatch is applied within it. Same
+# fix as Player.set_event_loop's ``_dispatch_context``.
+_dispatch_context: contextvars.Context | None = None
+
+
+def capture_dispatch_context() -> None:
+    """Snapshot the current contextvars context for future dispatches.
+
+    Must run on the app's event-loop thread — the platform services'
+    ``start()`` methods are called there — so the snapshot carries
+    Textual's ``active_app`` ContextVar.
+    """
+    global _dispatch_context
+    try:
+        _dispatch_context = contextvars.copy_context()
+    except Exception:
+        _dispatch_context = None
 
 
 def dispatch_coro_threadsafe(
@@ -51,7 +75,10 @@ def dispatch_coro_threadsafe(
         task.add_done_callback(_pending_tasks.discard)
 
     try:
-        loop.call_soon_threadsafe(_spawn)
+        if _dispatch_context is not None:
+            loop.call_soon_threadsafe(_spawn, context=_dispatch_context)
+        else:
+            loop.call_soon_threadsafe(_spawn)
         return True
     except RuntimeError:
         logger.debug("Event loop closed, cannot dispatch media-key callback")
