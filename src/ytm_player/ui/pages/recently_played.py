@@ -205,8 +205,7 @@ class RecentlyPlayedPage(TrackFilterHost, Widget):
     # ── Per-tab cache ────────────────────────────────────────────────
     # Local history lives in a per-page dict (cheap SQLite read). The YT
     # Music history is cached at the app level so it survives page navigation
-    # (no refetch per visit) and can be optimistically updated when a play is
-    # reported — see PlaybackMixin._optimistic_ytm_history_add.
+    # (no refetch per visit).
 
     def _get_cache(self, index: int) -> list[dict] | None:
         if index == _TAB_YTM:
@@ -257,8 +256,8 @@ class RecentlyPlayedPage(TrackFilterHost, Widget):
         self._ytm_auth_required = False
         self._ytm_load_failed = False
 
-        # Reuse the app-level cache when present (populated on a prior visit
-        # and kept fresh optimistically) so we don't refetch every time.
+        # Reuse the app-level cache when present (populated on a prior visit)
+        # so we don't refetch every time.
         cached = self._get_cache(_TAB_YTM)
         if cached is not None:
             if self._active_tab == _TAB_YTM:
@@ -282,8 +281,28 @@ class RecentlyPlayedPage(TrackFilterHost, Widget):
             self._ytm_load_failed = True
             tracks: list[dict] = []
         else:
-            tracks = normalize_tracks(raw)[:_MAX_TRACKS]
-            self._set_cache(_TAB_YTM, tracks)
+            # The feed mixes genuine online plays with plays this app synced
+            # there (sync_history_to_ytmusic), so drop everything known to
+            # the local history — this tab shows online-only plays. On a
+            # local DB error, degrade to the unfiltered feed rather than an
+            # empty tab. Cap AFTER filtering so exclusions don't shrink the
+            # tab when the feed has enough online-only entries.
+            local_ids: set[str] = set()
+            filtered = True
+            history = self.app.history  # type: ignore[attr-defined]
+            if history:
+                try:
+                    local_ids = await history.get_played_video_ids()
+                except (OSError, sqlite3.Error, RuntimeError):
+                    logger.exception("Failed to load local ids for YT Music history filter")
+                    filtered = False
+            tracks = [t for t in normalize_tracks(raw) if get_video_id(t) not in local_ids]
+            tracks = tracks[:_MAX_TRACKS]
+            if filtered:
+                # Cache only successfully-filtered loads: caching a degraded
+                # (unfiltered) list would keep TUI plays on this tab for the
+                # rest of the session with no retry of the filter.
+                self._set_cache(_TAB_YTM, tracks)
         if self._active_tab == _TAB_YTM:
             self._display_tracks(tracks)
 

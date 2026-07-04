@@ -3,7 +3,8 @@
 Covers the behaviour added when the page gained a second tab backed by
 the YT Music account history (``get_history()``):
 
-- the YT Music loader normalises + caps the server rows at ``_MAX_TRACKS``,
+- the YT Music loader normalises the server rows, filters out locally-played
+  tracks (the tab shows online-only plays), and caps at ``_MAX_TRACKS``,
 - empty / missing-service states render the right message,
 - the local loader honours the same cap,
 - keyboard tab switching (Enter on a focused tab label) works.
@@ -15,6 +16,7 @@ and replace the widgets the page queries with ``MagicMock`` at the
 
 from __future__ import annotations
 
+import sqlite3
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -85,6 +87,7 @@ async def test_ytm_tab_caps_rows_at_max_tracks(monkeypatch: pytest.MonkeyPatch) 
     fake_app = MagicMock()
     fake_app.ytmusic = fake_ytmusic
     fake_app._ytm_history = None  # not cached yet → fetch
+    fake_app.history.get_played_video_ids = AsyncMock(return_value=set())
     _attach_fake_app(page, fake_app, monkeypatch)
 
     await page._load_ytm_history()
@@ -96,6 +99,76 @@ async def test_ytm_tab_caps_rows_at_max_tracks(monkeypatch: pytest.MonkeyPatch) 
     assert len(fake_app._ytm_history) == _MAX_TRACKS
 
 
+async def test_ytm_tab_filters_out_locally_played_tracks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The account feed mixes online plays with plays this app synced there
+    (sync_history_to_ytmusic); the tab must show online-only rows."""
+    page, widgets = _make_page(active_tab=_TAB_YTM)
+
+    fake_ytmusic = MagicMock()
+    fake_ytmusic.get_history = AsyncMock(return_value=_raw_tracks(5))
+    fake_app = MagicMock()
+    fake_app.ytmusic = fake_ytmusic
+    fake_app._ytm_history = None
+    fake_app.history.get_played_video_ids = AsyncMock(return_value={"vid0001", "vid0003"})
+    _attach_fake_app(page, fake_app, monkeypatch)
+
+    await page._load_ytm_history()
+
+    loaded = widgets["#recent-table"].load_tracks.call_args.args[0]
+    assert [t["video_id"] for t in loaded] == ["vid0000", "vid0002", "vid0004"]
+    # The cache holds the filtered list too — TUI plays never enter it.
+    assert [t["video_id"] for t in fake_app._ytm_history] == ["vid0000", "vid0002", "vid0004"]
+
+
+async def test_ytm_tab_caps_after_filtering(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The _MAX_TRACKS cap applies to the FILTERED list: local exclusions
+    must not shrink the tab while the feed has enough online-only rows."""
+    page, widgets = _make_page(active_tab=_TAB_YTM)
+
+    fake_ytmusic = MagicMock()
+    fake_ytmusic.get_history = AsyncMock(return_value=_raw_tracks(200))
+    fake_app = MagicMock()
+    fake_app.ytmusic = fake_ytmusic
+    fake_app._ytm_history = None
+    # Exclude the first 50: 150 online-only rows remain, still >= _MAX_TRACKS.
+    fake_app.history.get_played_video_ids = AsyncMock(
+        return_value={f"vid{i:04d}" for i in range(50)}
+    )
+    _attach_fake_app(page, fake_app, monkeypatch)
+
+    await page._load_ytm_history()
+
+    loaded = widgets["#recent-table"].load_tracks.call_args.args[0]
+    assert len(loaded) == _MAX_TRACKS
+    assert loaded[0]["video_id"] == "vid0050"
+
+
+async def test_ytm_tab_local_db_error_degrades_to_unfiltered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the local-id read fails, show the unfiltered feed — a local DB
+    error must not blank the online tab."""
+    page, widgets = _make_page(active_tab=_TAB_YTM)
+
+    fake_ytmusic = MagicMock()
+    fake_ytmusic.get_history = AsyncMock(return_value=_raw_tracks(5))
+    fake_app = MagicMock()
+    fake_app.ytmusic = fake_ytmusic
+    fake_app._ytm_history = None
+    fake_app.history.get_played_video_ids = AsyncMock(side_effect=sqlite3.Error("locked"))
+    _attach_fake_app(page, fake_app, monkeypatch)
+
+    await page._load_ytm_history()
+
+    loaded = widgets["#recent-table"].load_tracks.call_args.args[0]
+    assert len(loaded) == 5
+    # Degraded (unfiltered) data must NOT be cached — the next visit has to
+    # retry the filter instead of showing TUI plays all session.
+    assert fake_app._ytm_history is None
+
+
 async def test_ytm_tab_empty_history_message(monkeypatch: pytest.MonkeyPatch) -> None:
     page, widgets = _make_page(active_tab=_TAB_YTM)
 
@@ -104,6 +177,7 @@ async def test_ytm_tab_empty_history_message(monkeypatch: pytest.MonkeyPatch) ->
     fake_app = MagicMock()
     fake_app.ytmusic = fake_ytmusic
     fake_app._ytm_history = None
+    fake_app.history.get_played_video_ids = AsyncMock(return_value=set())
     _attach_fake_app(page, fake_app, monkeypatch)
 
     await page._load_ytm_history()
@@ -310,6 +384,7 @@ async def test_local_failure_does_not_leak_onto_ytm_tab(monkeypatch) -> None:
     page, widgets = _make_page(active_tab=_TAB_LOCAL)
     fake_app = MagicMock()
     fake_app.history.get_recently_played = AsyncMock(side_effect=OSError("locked"))
+    fake_app.history.get_played_video_ids = AsyncMock(return_value=set())
     fake_ytmusic = MagicMock()
     fake_ytmusic.get_history = AsyncMock(return_value=[])
     fake_app.ytmusic = fake_ytmusic
@@ -335,6 +410,7 @@ async def test_ytm_visit_does_not_clear_local_failure_flag(monkeypatch) -> None:
     fake_app = MagicMock()
     fake_app.ytmusic = fake_ytmusic
     fake_app._ytm_history = None
+    fake_app.history.get_played_video_ids = AsyncMock(return_value=set())
     _attach_fake_app(page, fake_app, monkeypatch)
     page._load_failed = True  # local tab failed earlier
 

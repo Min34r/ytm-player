@@ -307,6 +307,19 @@ class HistoryManager:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
+    async def get_played_video_ids(self) -> set[str]:
+        """Return the set of video_ids ever played locally.
+
+        Used by the Recently Played page to filter TUI plays out of the
+        YT Music tab — the account feed mixes genuine online plays with
+        plays this app synced there (sync_history_to_ytmusic).
+        """
+        if self._db is None:
+            raise RuntimeError("Database not initialized")
+        async with self._db.execute("SELECT DISTINCT video_id FROM play_history") as cursor:
+            rows = await cursor.fetchall()
+            return {row["video_id"] for row in rows}
+
     # ------------------------------------------------------------------
     # Stats
     # ------------------------------------------------------------------

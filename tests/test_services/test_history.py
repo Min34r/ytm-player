@@ -166,6 +166,21 @@ class TestPlayHistory:
         assert recent[0]["video_id"] == "v1"
         await history_manager.close()
 
+    async def test_get_played_video_ids_returns_distinct_ids(self, history_manager):
+        await history_manager.init()
+        await history_manager.log_play(_make_track("v1", "A"), 10, "search")
+        await history_manager.log_play(_make_track("v1", "A"), 15, "search")
+        await history_manager.log_play(_make_track("v2", "B"), 20, "queue")
+        ids = await history_manager.get_played_video_ids()
+        assert ids == {"v1", "v2"}
+        await history_manager.close()
+
+    async def test_get_played_video_ids_empty_db_returns_empty_set(self, history_manager):
+        await history_manager.init()
+        ids = await history_manager.get_played_video_ids()
+        assert ids == set()
+        await history_manager.close()
+
     async def test_update_play_listened_seconds_updates_row_and_stats(self, history_manager):
         await history_manager.init()
         play_id = await history_manager.log_play(_make_track("v1", "Song"), 10, "tui")
