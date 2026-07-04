@@ -6,13 +6,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-### Unreleased
+### v2.0.0 (2026-07-04)
 
 **New features**
 
-- **Recently Played — YT Music account history tab** — the Recently Played page now has two tabs: **Local** (the existing SQLite play history recorded inside this app) and **YT Music** (your account-wide play history fetched from the server via ytmusicapi `get_history()`). Switch tabs by clicking the labels or with the keyboard (`Tab` / `Shift+Tab` to focus a tab label, `Enter` to activate) — consistent with the Browse page. Each tab is cached so switching back doesn't refetch; re-clicking the active tab does a hard refresh (Local re-reads SQLite, YT Music refetches the server). Both tabs are capped at 100 rows to keep the TUI responsive, and a just-played track is added to the open tab optimistically. `[▶ Start Radio]` and filtering work on both. No new keybinding — both views live under `g r`.
+- **Recently Played — YT Music account history tab** — the Recently Played page now has two tabs: **Local** (the existing SQLite play history recorded inside this app) and **YT Music** (your account-wide play history fetched from the server via ytmusicapi `get_history()`). Switch tabs by clicking the labels or with the keyboard (`Tab` / `Shift+Tab` to focus a tab label, `Enter` to activate) — consistent with the Browse page. Each tab is cached so switching back doesn't refetch; re-clicking the active tab does a hard refresh (Local re-reads SQLite, YT Music refetches the server). Both tabs are capped at 100 rows to keep the TUI responsive. The two views are disjoint: **Local** shows what you played in this app (a just-played track appears at the top immediately), **YT Music** shows only plays made elsewhere (phone, browser) — plays this app syncs to your account are filtered out of the server feed, and a track you play locally drops off the YT Music tab live. `[▶ Start Radio]` and filtering work on both. No new keybinding — both views live under `g r`.
 - **Plays sync to your YouTube Music history** — tracks played in the TUI are now reported back to your YT Music account (via `add_history_item()`), so they show up in your history and feed recommendations like any other client. Fired best-effort in the background so it never blocks playback. Opt-out via `playback.sync_history_to_ytmusic = false`.
-- **Configurable listen threshold** — `playback.history_min_listen_seconds` (default 5) sets how long a track must play before it counts as a play instead of a skip, for both local history and the YT Music account sync. Clamped to 0–3600; `0` counts any playback.
+- **Configurable listen threshold** — `playback.history_min_listen_seconds` (default 5) sets how long a track must play before it counts as a play instead of a skip, for both local history and the YT Music account sync. Clamped to 0–3600; `0` still requires at least one full second of playback.
 - **Play Next, everywhere** — press `X` (or `Ctrl+X`) on any page to slot the focused track in right after the current one. Albums and playlists get a "Play Next" entry in their context menus too, inserting the whole set in order — shuffle-aware, so they still play next even with shuffle on.
 
 **Changes**
@@ -21,9 +21,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **Add to Queue works on every page** — `Z` / `Ctrl+Z` silently did nothing on five of the seven pages; it now works everywhere through the same track resolution the actions menu uses, and queue toasts name the track ("Added to queue: …", "Playing next: …").
 - **Retired keybindings that promised nothing** — `g A` / `g a` ("context/selected actions") were bound, routed, and listed in Help, but no page ever implemented them (the `a` actions menu already does that job) — removed, along with the dead Escape close-popup action. The Help page now matches reality.
 - **Every color now follows your theme** — the last hard-coded widget colors (the search-mode `▶` indicator and the Spotify-import status texts and result symbols) now use the theme's `primary` / `success` / `warning` / `error` variables, so custom themes recolor them too.
+- **`toggle_search_mode` ships unbound** — the `M-v` default was unreliable because most terminals intercept Alt+letter for their own menus; bind your own key in `keymap.toml` if you want one.
 
 **Fixes**
 
+- **Video rows stop crediting "1.2M views" as the artist** — YT Music returns the view count as a pseudo-artist on video results; it's now stripped during normalization, so history and video rows show the real artist and artist-based actions (go to artist, radio) built from those rows target the right one.
 - **MPRIS survives broken dbus-fast builds** — a dbus-fast that raises `TypeError` at import (dbus-fast 4.x on Python 3.14) now disables MPRIS with a notice instead of crashing at startup. Thanks @dsafxP (#113).
 - **Queue: `d`/`J`/`K` after sort or filter** — deleting or reordering on a sorted/filtered Queue page acted on the wrong underlying track; the row→track mapping is now correct.
 - **Playing a selected track works the same on every page** — Search and Browse now rebuild the queue the way Library and Context always did, fixing stale Queue-page contents and duplicate plays from double-fired events.
@@ -42,6 +44,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **Playlist-creation failures say why** — creating a playlist (sidebar, picker, or Spotify import) now reports whether it failed from an expired session, a network problem, or a server error, instead of a generic "Failed to create playlist".
 - **A corrupt saved volume can't derail startup** — a garbage `volume` in session.json falls back to the default and out-of-range values clamp to 0–100, instead of aborting the session restore midway.
 - **Liked Songs distinguishes "empty" from "failed"** — a fetch failure now shows a check-the-log message instead of the misleading "No liked songs found."
+- **Browse outages say so** — when For You or Charts can't be fetched (network, expired session, server error), the sections now show the retryable error copy instead of pretending the account has no recommendations or the region has no charts.
 - **Two swallowed-input quirks** — a right-click that didn't open a popup no longer eats your next Enter/click, and picking a search suggestion identical to the current input no longer eats the next keystroke.
 - **`ytm doctor` stops counting bystanders** — any process whose command line contained a `/ytm…` path (an editor open on the repo, say) counted as a running instance; only the real `ytm` / `python -m ytm_player` entry points match now, including console-script launches (where the interpreter sits in argv[0] and the `ytm` script path in argv[1]).
 - **A crashed session can't lock you out** — if the OS handed a crashed instance's PID to an unrelated process, `ytm` refused to launch until `ytm.pid` was deleted by hand; the single-instance guard now checks that the recorded process is actually ytm-player and cleans the stale file itself.
