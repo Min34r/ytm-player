@@ -15,7 +15,7 @@ from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Input, Label, ListItem, ListView, Static
 
-from ytm_player.config.keymap import Action, MatchResult
+from ytm_player.config.keymap import Action
 from ytm_player.config.settings import get_settings
 from ytm_player.ui.theme import get_theme
 from ytm_player.ui.widgets.track_table import TrackTable
@@ -568,36 +568,19 @@ class SearchPage(Widget):
         self.run_worker(self._execute_search(query), name="search", exclusive=True)
 
     def on_key(self, event: object) -> None:
-        """Handle keys while the search input is focused: the search-mode
-        toggle (app-level dispatch skips Inputs) and Escape."""
+        """Handle Escape on the search input: hide suggestions + defocus."""
         from textual.events import Key
 
         if not isinstance(event, Key):
             return
-
-        focused = self.app.focused
-        input_focused = focused is not None and getattr(focused, "id", None) == "search-input"
-
-        # The app-level dispatcher ignores keys while an Input is focused, so
-        # the search-mode toggle (default M-v) is dead exactly where users
-        # expect it — while typing. Match single-key bindings here; sequences
-        # still need the app dispatcher.
-        if input_focused:
-            normalize = getattr(self.app, "_normalize_key", None)
-            keymap = getattr(self.app, "keymap", None)
-            if normalize is not None and keymap is not None:
-                result, action = keymap.match((normalize(event),))
-                if result is MatchResult.EXACT and action is Action.TOGGLE_SEARCH_MODE:
-                    event.stop()
-                    event.prevent_default()
-                    self._toggle_search_mode()
-                    return
-
         if event.key != "escape":
             return
 
         # Only act when the search input is focused OR the suggestions
         # dropdown is visible. Otherwise let Escape bubble normally.
+        focused = self.app.focused
+        input_focused = focused is not None and getattr(focused, "id", None) == "search-input"
+
         suggestions_visible = False
         try:
             overlay = self.query_one("#suggestion-overlay", SuggestionList)
