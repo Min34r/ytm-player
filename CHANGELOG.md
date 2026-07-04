@@ -27,6 +27,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - **Video rows stop crediting "1.2M views" as the artist** — YT Music returns the view count as a pseudo-artist on video results; it's now stripped during normalization, so history and video rows show the real artist and artist-based actions (go to artist, radio) built from those rows target the right one. Thanks @Villoh (#116).
 - **MPRIS survives broken dbus-fast builds** — a dbus-fast that raises `TypeError` at import (dbus-fast 4.x on Python 3.14) now disables MPRIS with a notice instead of crashing at startup. Thanks @dsafxP (#113).
+- **Discord presence can no longer wedge on one bad call** — a single failed pypresence call (closed pipe, timeout) silently disabled Rich Presence for the rest of the session, leaving the last song stuck on Discord until app exit. RPC calls are now serialized, reconnect on demand, and retry once after a failure. Thanks for the report @SUPER-MAGIX (#117).
 - **Queue: `d`/`J`/`K` after sort or filter** — deleting or reordering on a sorted/filtered Queue page acted on the wrong underlying track; the row→track mapping is now correct.
 - **Playing a selected track works the same on every page** — Search and Browse now rebuild the queue the way Library and Context always did, fixing stale Queue-page contents and duplicate plays from double-fired events.
 - **Removing the playing track under shuffle** — the queue now advances to the next shuffled track, matching non-shuffle behaviour, instead of landing somewhere arbitrary.
