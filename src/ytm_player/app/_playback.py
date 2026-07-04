@@ -221,7 +221,7 @@ class PlaybackMixin(YTMHostBase):
             return
 
         # Update Discord Rich Presence.
-        if self.discord and self.discord.is_connected:
+        if self.discord:
             await self.discord.update(
                 title=track.get("title") or "",
                 artist=track.get("artist") or "",
@@ -651,7 +651,7 @@ class PlaybackMixin(YTMHostBase):
 
         # Update Discord presence on pause/resume.
         discord = self.discord
-        if discord and discord.is_connected:
+        if discord:
             try:
                 if paused:
                     self.call_later(lambda d=discord: self.run_worker(d.clear()))

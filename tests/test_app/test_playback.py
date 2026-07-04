@@ -603,6 +603,47 @@ class TestCrossTrackRace:
         assert resolved == ["BBB"], "superseded call kept going after history log"
 
 
+class TestDiscordRecoveryFanout:
+    def _stream_info(self):
+        from ytm_player.services.stream import StreamInfo
+
+        return StreamInfo(
+            url="http://x",
+            video_id="abc",
+            format="opus",
+            bitrate=128,
+            duration=200,
+            expires_at=float("inf"),
+            thumbnail_url=None,
+        )
+
+    async def test_track_start_calls_discord_even_when_marked_disconnected(self):
+        host = _fresh_playback_host()
+        host.stream_resolver.resolve = AsyncMock(return_value=self._stream_info())
+        host.discord = MagicMock()
+        host.discord.is_connected = False
+        host.discord.update = AsyncMock()
+        track = {"video_id": "abc", "title": "Song", "artist": "Artist"}
+
+        async def _play(url, t):
+            host.player.current_track = t
+
+        host.player.play = AsyncMock(side_effect=_play)
+
+        await host.play_track(track)
+
+        host.discord.update.assert_awaited_once()
+
+    def test_pause_calls_discord_even_when_marked_disconnected(self):
+        host = _fresh_playback_host()
+        host.discord = MagicMock()
+        host.discord.is_connected = False
+
+        host._on_pause_change(paused=True)
+
+        host.call_later.assert_called_once()
+
+
 class TestTrackEndFinalize:
     async def test_stale_track_end_noops_when_new_play_current(self):
         """A new play can commit between mpv's end-file event and this

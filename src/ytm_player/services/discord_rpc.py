@@ -6,8 +6,12 @@ Requires the optional `pypresence` package.
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 import time
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +34,17 @@ class DiscordRPC:
         self._rpc: object | None = None
         self._connected = False
         self._start_time: float = 0
+        self._lock = asyncio.Lock()
 
     async def connect(self) -> bool:
         """Attempt to connect to Discord. Returns True on success."""
+        async with self._lock:
+            return await self._connect_unlocked()
+
+    async def _connect_unlocked(self) -> bool:
+        if self._connected and self._rpc:
+            return True
+
         try:
             # pypresence's stubs don't export AioPresence but it exists at
             # runtime. The except ImportError below handles missing-package.
@@ -55,13 +67,43 @@ class DiscordRPC:
 
     async def disconnect(self) -> None:
         """Disconnect from Discord."""
-        if self._rpc and self._connected:
-            try:
-                await self._rpc.close()  # type: ignore[union-attr]
-            except Exception:
-                pass
-            self._connected = False
-            self._rpc = None
+        async with self._lock:
+            await self._reset_connection_unlocked()
+
+    async def _reset_connection_unlocked(self) -> None:
+        rpc = self._rpc
+        self._rpc = None
+        self._connected = False
+        if not rpc:
+            return
+        try:
+            result = rpc.close()  # type: ignore[attr-defined]
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            logger.debug("Failed to close Discord RPC connection", exc_info=True)
+
+    async def _call_with_reconnect(
+        self, operation_name: str, operation: Callable[[object], Awaitable[Any]]
+    ) -> None:
+        async with self._lock:
+            if not await self._connect_unlocked():
+                return
+
+            for attempt in range(2):
+                rpc = self._rpc
+                if not rpc:
+                    return
+                try:
+                    await operation(rpc)
+                    self._connected = True
+                    return
+                except Exception:
+                    logger.debug("Failed to %s", operation_name, exc_info=True)
+                    await self._reset_connection_unlocked()
+                    if attempt == 0 and await self._connect_unlocked():
+                        continue
+                    return
 
     async def update(
         self,
@@ -73,9 +115,6 @@ class DiscordRPC:
         thumbnail_url: str = "",
     ) -> None:
         """Update the Discord presence with current track info."""
-        if not self._connected or not self._rpc:
-            return
-
         self._start_time = time.time() - position
 
         try:
@@ -97,21 +136,18 @@ class DiscordRPC:
         if duration > 0:
             kwargs["end"] = int(self._start_time + duration)
 
-        try:
-            await self._rpc.update(**kwargs)  # type: ignore[union-attr]
-        except Exception:
-            logger.debug("Failed to update Discord presence", exc_info=True)
-            self._connected = False
+        async def _update(rpc: object) -> Any:
+            return await rpc.update(**kwargs)  # type: ignore[attr-defined]
+
+        await self._call_with_reconnect("update Discord presence", _update)
 
     async def clear(self) -> None:
         """Clear the Discord presence (paused/stopped)."""
-        if not self._connected or not self._rpc:
-            return
-        try:
-            await self._rpc.clear()  # type: ignore[union-attr]
-        except Exception:
-            logger.debug("Failed to clear Discord presence", exc_info=True)
-            self._connected = False
+
+        async def _clear(rpc: object) -> Any:
+            return await rpc.clear()  # type: ignore[attr-defined]
+
+        await self._call_with_reconnect("clear Discord presence", _clear)
 
     @property
     def is_connected(self) -> bool:
