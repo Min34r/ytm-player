@@ -331,15 +331,20 @@ class YTMusicService:
     # Browsing
     # ------------------------------------------------------------------
 
-    async def get_home(self, limit: int = 3) -> list[dict[str, Any]]:
-        """Return personalised home page recommendations."""
+    async def get_home(self, limit: int = 3) -> list[dict[str, Any]] | None:
+        """Return personalised home page recommendations.
+
+        Returns ``None`` on failure (auth expired, network, server error) so
+        callers can distinguish a fetch failure from an account with no
+        recommendations — mirrors ``get_history``.
+        """
         try:
             return await self._call(self.client.get_home, limit=limit)
         except Exception:
             logger.exception("get_home failed")
-            return []
+            return None
 
-    async def get_charts(self, country: str = "ZZ") -> dict[str, Any]:
+    async def get_charts(self, country: str = "ZZ") -> dict[str, Any] | None:
         """Return chart data for *country* (ISO 3166-1 alpha-2, e.g. ``"GB"``).
 
         ``"ZZ"`` is YouTube's catch-all "Global" region and is the default
@@ -348,6 +353,9 @@ class YTMusicService:
         (``ES-ES``, ``en-GB``) are normalised to bare two-letter codes —
         YouTube's endpoint silently falls back to Global on locale-shaped
         input.
+
+        Returns ``None`` on failure so callers can distinguish a fetch
+        failure from a region with no chart data — mirrors ``get_history``.
         """
         from ytm_player.services.regions import normalise_region
 
@@ -356,7 +364,7 @@ class YTMusicService:
             return await self._call(self.client.get_charts, country=country)
         except Exception:
             logger.exception("get_charts failed for country=%r", country)
-            return {}
+            return None
 
     async def get_new_releases(self) -> list[dict[str, Any]]:
         """Return new album releases.

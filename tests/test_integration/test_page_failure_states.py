@@ -374,3 +374,41 @@ async def test_liked_songs_empty_playlist_shows_empty_state(
     assert any("No liked songs found" in msg for msg in update_calls), (
         f"loading label must show the empty-state message, got: {update_calls!r}"
     )
+
+
+# ── browse.py (For You / Charts) ────────────────────────────────────
+
+
+async def test_foryou_service_failure_shows_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """get_home returns None on any fetch failure — the section must show
+    the retryable error copy instead of rendering an empty shelf list."""
+    from ytm_player.ui.pages.browse import ForYouSection
+
+    section = ForYouSection()
+    fake_app = MagicMock()
+    fake_app.ytmusic.get_home = AsyncMock(return_value=None)
+    _attach_fake_app(section, fake_app, monkeypatch)
+    shown = MagicMock()
+    monkeypatch.setattr(section, "_show_error", shown)
+
+    await section.load_data()
+
+    shown.assert_called_once_with("Failed to load recommendations.")
+    assert section.is_loading is False
+
+
+async def test_charts_service_failure_shows_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """get_charts returns None on any fetch failure — same contract."""
+    from ytm_player.ui.pages.browse import ChartsSection
+
+    section = ChartsSection()
+    fake_app = MagicMock()
+    fake_app.ytmusic.get_charts = AsyncMock(return_value=None)
+    _attach_fake_app(section, fake_app, monkeypatch)
+    shown = MagicMock()
+    monkeypatch.setattr(section, "_show_error", shown)
+
+    await section.load_data(country="GB")
+
+    shown.assert_called_once_with("Failed to load charts for GB — try again later.")
+    assert section.is_loading is False

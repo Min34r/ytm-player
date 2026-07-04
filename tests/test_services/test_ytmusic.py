@@ -565,6 +565,20 @@ class TestHistory:
         assert await ytmusic_service.get_history() == []
 
 
+class TestBrowseFetchers:
+    async def test_get_home_returns_none_on_failure(self, ytmusic_service):
+        ytmusic_service._ytm.get_home = MagicMock(side_effect=RuntimeError("boom"))
+
+        # None (not []) so Browse can tell an outage from an account with
+        # no recommendations — mirrors get_history.
+        assert await ytmusic_service.get_home() is None
+
+    async def test_get_charts_returns_none_on_failure(self, ytmusic_service):
+        ytmusic_service._ytm.get_charts = MagicMock(side_effect=RuntimeError("boom"))
+
+        assert await ytmusic_service.get_charts(country="GB") is None
+
+
 class TestAddHistoryItem:
     """Piece 2: report TUI plays back to the YT Music account history."""
 

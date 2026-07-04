@@ -320,12 +320,19 @@ class ForYouSection(Widget):
             ytmusic = cast("YTMHostBase", self.app).ytmusic
             assert ytmusic is not None
             limit = get_settings().ui.home_shelves
-            self._shelves = await ytmusic.get_home(limit=limit)
+            shelves = await ytmusic.get_home(limit=limit)
         except Exception:
             logger.exception("Failed to load home recommendations")
             self._show_error("Failed to load recommendations.")
             self.is_loading = False
             return
+        if shelves is None:
+            # The service returns None on any fetch failure (network, auth,
+            # server error) — distinct from a genuinely empty home feed.
+            self._show_error("Failed to load recommendations.")
+            self.is_loading = False
+            return
+        self._shelves = shelves
 
         try:
             await self._populate_shelves()
@@ -590,12 +597,17 @@ class ChartsSection(Widget):
         try:
             ytmusic = cast("YTMHostBase", self.app).ytmusic
             assert ytmusic is not None
-            self._chart_data = await ytmusic.get_charts(country=country)
+            chart_data = await ytmusic.get_charts(country=country)
         except Exception:
             logger.exception("Failed to load charts for country=%r", country)
             self._show_error(f"Failed to load charts for {country} — try again later.")
             self.is_loading = False
             return
+        if chart_data is None:
+            self._show_error(f"Failed to load charts for {country} — try again later.")
+            self.is_loading = False
+            return
+        self._chart_data = chart_data
 
         try:
             raw: list[dict[str, Any]] = []
