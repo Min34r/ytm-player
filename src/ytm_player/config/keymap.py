@@ -173,8 +173,10 @@ DEFAULT_BINDINGS: dict[str, list[str]] = {
     "sort_duration": ["s d"],
     "sort_date": ["s D"],
     "reverse_sort": ["s r"],
-    # Search
-    "toggle_search_mode": ["M-v"],
+    # Search — no default binding: terminals commonly intercept Alt+letter
+    # (menu accelerators), making any Alt default unreliable. Users can bind
+    # their own key via keymap.toml.
+    "toggle_search_mode": [],
 }
 
 
