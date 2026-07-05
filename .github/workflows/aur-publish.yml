@@ -88,18 +88,24 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Copy PKGBUILD and regenerate .SRCINFO
+        # PKGVER enters via env, never ${{ }} inline in the script — inline
+        # expression splicing is the CodeQL actions/code-injection sink.
+        env:
+          PKGVER: ${{ steps.version.outputs.pkgver }}
         run: |
           cp aur/PKGBUILD /tmp/aur-repo/PKGBUILD
           # Force the real version into the pushed PKGBUILD — the pkgver= in
           # aur/PKGBUILD is a placeholder and may be stale (the v2.0.0 lesson).
           # regenerate_srcinfo.py emits this literal line into .SRCINFO.
-          sed -i "s/^pkgver=.*/pkgver=${{ steps.version.outputs.pkgver }}/" /tmp/aur-repo/PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=$PKGVER/" /tmp/aur-repo/PKGBUILD
           python3 scripts/regenerate_srcinfo.py /tmp/aur-repo/PKGBUILD /tmp/aur-repo/.SRCINFO
           echo "--- Diff vs previous AUR state ---"
           cd /tmp/aur-repo
           git diff --stat HEAD || true
 
       - name: Commit and push to AUR
+        env:
+          PKGVER: ${{ steps.version.outputs.pkgver }}
         run: |
           cd /tmp/aur-repo
           if git diff --quiet HEAD; then
@@ -107,6 +113,6 @@ jobs:
             exit 0
           fi
           git add PKGBUILD .SRCINFO
-          git commit -m "Update to v${{ steps.version.outputs.pkgver }}"
+          git commit -m "Update to v$PKGVER"
           git push origin master
-          echo "AUR push complete for v${{ steps.version.outputs.pkgver }}"
+          echo "AUR push complete for v$PKGVER"
