@@ -27,11 +27,25 @@ jobs:
     steps:
       - name: Check out repo
         uses: actions/checkout@v7
+        with:
+          # On workflow_run, checkout's default is the default branch — NOT
+          # the commit the Publish run built. Pin to that commit so the
+          # version read below is the same one publish.yml's tag guard
+          # verified. Falls back to github.ref for workflow_dispatch.
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
 
-      - name: Read version from PKGBUILD
+      # The version comes from __version__ — the same source of truth the
+      # Publish workflow's tag guard checks. The pkgver= line in aur/PKGBUILD
+      # is only a placeholder; it is overwritten below so a forgotten manual
+      # bump can never push a stale version to AUR again (the v2.0.0 lesson).
+      - name: Read version from package
         id: version
         run: |
-          PKGVER=$(grep '^pkgver=' aur/PKGBUILD | head -1 | cut -d= -f2 | tr -d "'\"")
+          PKGVER=$(grep -oP '^__version__\s*=\s*"\K[^"]+' src/ytm_player/__init__.py || true)
+          if [ -z "$PKGVER" ]; then
+            echo "::error::Could not read __version__ from src/ytm_player/__init__.py"
+            exit 1
+          fi
           echo "pkgver=$PKGVER" >> "$GITHUB_OUTPUT"
           echo "Detected version: $PKGVER"
 
@@ -64,6 +78,10 @@ jobs:
       - name: Copy PKGBUILD and regenerate .SRCINFO
         run: |
           cp aur/PKGBUILD /tmp/aur-repo/PKGBUILD
+          # Force the real version into the pushed PKGBUILD — the pkgver= in
+          # aur/PKGBUILD is a placeholder and may be stale (the v2.0.0 lesson).
+          # regenerate_srcinfo.py emits this literal line into .SRCINFO.
+          sed -i "s/^pkgver=.*/pkgver=${{ steps.version.outputs.pkgver }}/" /tmp/aur-repo/PKGBUILD
           python3 scripts/regenerate_srcinfo.py /tmp/aur-repo/PKGBUILD /tmp/aur-repo/.SRCINFO
           echo "--- Diff vs previous AUR state ---"
           cd /tmp/aur-repo
