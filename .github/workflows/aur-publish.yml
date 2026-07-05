@@ -26,13 +26,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repo
+        # No ref: on workflow_run this checks out the default branch, so the
+        # only code this privileged job executes (scripts/regenerate_srcinfo.py
+        # below) comes from trusted master — never from the triggering commit
+        # (CodeQL actions/untrusted-checkout). The release commit's files are
+        # extracted as plain data in the next step.
         uses: actions/checkout@v7
-        with:
-          # On workflow_run, checkout's default is the default branch — NOT
-          # the commit the Publish run built. Pin to that commit so the
-          # version read below is the same one publish.yml's tag guard
-          # verified. Falls back to github.ref for workflow_dispatch.
-          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+
+      - name: Extract release files from the triggering commit
+        # The version + PKGBUILD must come from the exact commit the Publish
+        # run built — the same one its tag guard verified — but only as DATA
+        # via `git show`; nothing from that commit is checked out or executed.
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ -n "$HEAD_SHA" ]; then
+            git fetch --depth=1 origin "$HEAD_SHA"
+            git show "$HEAD_SHA:src/ytm_player/__init__.py" > /tmp/release_init.py
+            git show "$HEAD_SHA:aur/PKGBUILD" > /tmp/release_pkgbuild
+          else
+            # workflow_dispatch: no upstream run — use the checked-out files.
+            cp src/ytm_player/__init__.py /tmp/release_init.py
+            cp aur/PKGBUILD /tmp/release_pkgbuild
+          fi
 
       # The version comes from __version__ — the same source of truth the
       # Publish workflow's tag guard checks. The pkgver= line in aur/PKGBUILD
@@ -41,9 +57,9 @@ jobs:
       - name: Read version from package
         id: version
         run: |
-          PKGVER=$(grep -oP '^__version__\s*=\s*"\K[^"]+' src/ytm_player/__init__.py || true)
+          PKGVER=$(grep -oP '^__version__\s*=\s*"\K[^"]+' /tmp/release_init.py || true)
           if [ -z "$PKGVER" ]; then
-            echo "::error::Could not read __version__ from src/ytm_player/__init__.py"
+            echo "::error::Could not read __version__ from the release commit's src/ytm_player/__init__.py"
             exit 1
           fi
           echo "pkgver=$PKGVER" >> "$GITHUB_OUTPUT"
@@ -77,7 +93,7 @@ jobs:
 
       - name: Copy PKGBUILD and regenerate .SRCINFO
         run: |
-          cp aur/PKGBUILD /tmp/aur-repo/PKGBUILD
+          cp /tmp/release_pkgbuild /tmp/aur-repo/PKGBUILD
           # Force the real version into the pushed PKGBUILD — the pkgver= in
           # aur/PKGBUILD is a placeholder and may be stale (the v2.0.0 lesson).
           # regenerate_srcinfo.py emits this literal line into .SRCINFO.
