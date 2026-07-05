@@ -26,41 +26,37 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repo
-        # No ref: on workflow_run this checks out the default branch, so the
-        # only code this privileged job executes (scripts/regenerate_srcinfo.py
-        # below) comes from trusted master — never from the triggering commit
-        # (CodeQL actions/untrusted-checkout). The release commit's files are
-        # extracted as plain data in the next step.
+        # No ref: always the default branch. Nothing from the triggering
+        # commit is fetched, checked out, or executed in this privileged job
+        # (CodeQL actions/untrusted-checkout — alerts #5 and #6).
         uses: actions/checkout@v7
 
-      - name: Extract release files from the triggering commit
-        # The version + PKGBUILD must come from the exact commit the Publish
-        # run built — the same one its tag guard verified — but only as DATA
-        # via `git show`; nothing from that commit is checked out or executed.
-        env:
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          if [ -n "$HEAD_SHA" ]; then
-            git fetch --depth=1 origin "$HEAD_SHA"
-            git show "$HEAD_SHA:src/ytm_player/__init__.py" > /tmp/release_init.py
-            git show "$HEAD_SHA:aur/PKGBUILD" > /tmp/release_pkgbuild
-          else
-            # workflow_dispatch: no upstream run — use the checked-out files.
-            cp src/ytm_player/__init__.py /tmp/release_init.py
-            cp aur/PKGBUILD /tmp/release_pkgbuild
-          fi
-
-      # The version comes from __version__ — the same source of truth the
-      # Publish workflow's tag guard checks. The pkgver= line in aur/PKGBUILD
-      # is only a placeholder; it is overwritten below so a forgotten manual
-      # bump can never push a stale version to AUR again (the v2.0.0 lesson).
-      - name: Read version from package
+      # The version comes from the triggering Publish run's tag name
+      # (workflow_run.head_branch is the pushed tag for tag-triggered runs).
+      # publish.yml's tag guard refuses to publish unless that tag matches
+      # __version__, so the tag IS the verified release version — nothing
+      # needs to be read from the release commit at all. The pkgver= line in
+      # aur/PKGBUILD is only a placeholder; it is overwritten below so a
+      # forgotten manual bump can never push a stale version to AUR again
+      # (the v2.0.0 lesson). workflow_dispatch falls back to __version__
+      # from the checkout.
+      - name: Determine release version
         id: version
+        env:
+          TAG_NAME: ${{ github.event.workflow_run.head_branch }}
         run: |
-          PKGVER=$(grep -oP '^__version__\s*=\s*"\K[^"]+' /tmp/release_init.py || true)
-          if [ -z "$PKGVER" ]; then
-            echo "::error::Could not read __version__ from the release commit's src/ytm_player/__init__.py"
-            exit 1
+          if [ -n "$TAG_NAME" ]; then
+            if ! printf '%s\n' "$TAG_NAME" | grep -qE '^v[0-9][0-9A-Za-z.]*$'; then
+              echo "::error::Triggering ref '$TAG_NAME' is not a version tag; refusing to publish."
+              exit 1
+            fi
+            PKGVER="${TAG_NAME#v}"
+          else
+            PKGVER=$(grep -oP '^__version__\s*=\s*"\K[^"]+' src/ytm_player/__init__.py || true)
+            if [ -z "$PKGVER" ]; then
+              echo "::error::Could not read __version__ from src/ytm_player/__init__.py"
+              exit 1
+            fi
           fi
           echo "pkgver=$PKGVER" >> "$GITHUB_OUTPUT"
           echo "Detected version: $PKGVER"
@@ -93,7 +89,7 @@ jobs:
 
       - name: Copy PKGBUILD and regenerate .SRCINFO
         run: |
-          cp /tmp/release_pkgbuild /tmp/aur-repo/PKGBUILD
+          cp aur/PKGBUILD /tmp/aur-repo/PKGBUILD
           # Force the real version into the pushed PKGBUILD — the pkgver= in
           # aur/PKGBUILD is a placeholder and may be stale (the v2.0.0 lesson).
           # regenerate_srcinfo.py emits this literal line into .SRCINFO.
