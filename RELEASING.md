@@ -4,23 +4,24 @@ The release flow is **tag-driven**. Pushing a `vX.Y.Z` tag triggers PyPI publish
 
 ## Quick checklist
 
-1. **Bump version** — `src/ytm_player/__init__.py` → `__version__ = "X.Y.Z"`
-2. **Update PKGBUILD** — `aur/PKGBUILD` → `pkgver=X.Y.Z`
-3. **Fold CHANGELOG** — collapse all `### Unreleased` blocks into one `### vX.Y.Z (YYYY-MM-DD)` entry
-4. **Lint + test**:
+1. **Bump version** — `src/ytm_player/__init__.py` → `__version__ = "X.Y.Z"` (this is the
+   single source of truth: the tag guard checks it and the AUR workflow derives `pkgver`
+   from it — do NOT hand-edit `pkgver=` in `aur/PKGBUILD`, CI overwrites it)
+2. **Fold CHANGELOG** — collapse all `### Unreleased` blocks into one `### vX.Y.Z (YYYY-MM-DD)` entry
+3. **Lint + test**:
    ```bash
    .venv/bin/ruff format src/ tests/
    .venv/bin/ruff check src/ tests/
    .venv/bin/pytest -x -q
    ```
-5. **Commit + tag + push**:
+4. **Commit + tag + push**:
    ```bash
    git add -A
    git commit -m "chore(release): vX.Y.Z"
    git tag vX.Y.Z
    git push origin master --tags
    ```
-6. **Watch the workflows**:
+5. **Watch the workflows**:
    ```bash
    gh run watch --exit-status
    ```
@@ -35,7 +36,7 @@ No API tokens — auth is via OIDC trusted-publisher entries at PyPI and TestPyP
 
 ### `Publish AUR` workflow (`.github/workflows/aur-publish.yml`)
 
-Triggered after `Publish` succeeds. Reads `pkgver` from `aur/PKGBUILD`, clones `ssh://aur@aur.archlinux.org/ytm-player-git.git` via SSH key, copies `PKGBUILD`, regenerates `.SRCINFO` via `scripts/regenerate_srcinfo.py` (pure Python — no Arch dependency on Ubuntu CI runners), commits and pushes.
+Triggered after `Publish` succeeds. Checks out the exact commit the `Publish` run built (the one the tag guard verified), reads the version from `__version__` in `src/ytm_player/__init__.py`, clones `ssh://aur@aur.archlinux.org/ytm-player-git.git` via SSH key, copies `PKGBUILD`, rewrites its `pkgver=` line to the real version (the committed `pkgver=` is only a placeholder), regenerates `.SRCINFO` via `scripts/regenerate_srcinfo.py` (pure Python — no Arch dependency on Ubuntu CI runners), commits and pushes.
 
 The `regenerate_srcinfo.py` script handles shell variable expansion (`${url}`, `$pkgname`) so PKGBUILD constructs like `source=("git+${url}.git")` resolve correctly in the emitted `.SRCINFO`.
 
@@ -44,6 +45,8 @@ The `regenerate_srcinfo.py` script handles shell variable expansion (`${url}`, `
 ```bash
 git clone ssh://aur@aur.archlinux.org/ytm-player-git.git /tmp/ytm-player-aur
 cp aur/PKGBUILD /tmp/ytm-player-aur/
+# The committed pkgver= is a placeholder — set the real version, like CI does:
+sed -i "s/^pkgver=.*/pkgver=X.Y.Z/" /tmp/ytm-player-aur/PKGBUILD
 python3 scripts/regenerate_srcinfo.py /tmp/ytm-player-aur/PKGBUILD /tmp/ytm-player-aur/.SRCINFO
 cd /tmp/ytm-player-aur
 git add PKGBUILD .SRCINFO

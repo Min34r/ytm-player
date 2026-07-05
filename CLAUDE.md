@@ -129,7 +129,7 @@ Three GitHub Actions workflows live in `.github/workflows/`:
 
 ## Releases
 
-The flow is **tag-driven**. Pushing a `vX.Y.Z` tag triggers `publish.yml`, which handles PyPI + the GitHub Release end-to-end. AUR is still updated by hand afterward.
+The flow is **tag-driven**. Pushing a `vX.Y.Z` tag triggers `publish.yml`, which handles PyPI + the GitHub Release end-to-end; `aur-publish.yml` then pushes to AUR automatically, deriving `pkgver` from `__version__` (never hand-bump `pkgver=` in `aur/PKGBUILD` — CI overwrites it).
 
 ### One-time setup (already done)
 
@@ -156,20 +156,11 @@ GitHub Environments `pypi` and `testpypi` exist in repo settings. No API tokens 
 
 Trigger `Publish` manually from the Actions tab → `Run workflow` → target `testpypi`. Builds + uploads to https://test.pypi.org/project/ytm-player/ without touching production. Useful when changing build config or pyproject metadata.
 
-### After PyPI publishes — update AUR
+### AUR (automated)
 
-AUR (`ytm-player-git`) PKGBUILD lives in `aur/PKGBUILD`. After every release:
+`aur-publish.yml` runs after `Publish` succeeds: it checks out the release commit, derives the version from `__version__`, rewrites `pkgver=` in the copied `aur/PKGBUILD` (the committed value is only a placeholder), regenerates `.SRCINFO`, and pushes to AUR. No manual version step.
 
-1. If dependencies changed: update `depends`/`optdepends`/`makedepends` in `aur/PKGBUILD`.
-2. Push the AUR update:
-
-```bash
-git clone ssh://aur@aur.archlinux.org/ytm-player-git.git /tmp/ytm-player-aur
-cp aur/PKGBUILD /tmp/ytm-player-aur/
-cd /tmp/ytm-player-aur && makepkg --printsrcinfo > .SRCINFO
-git add PKGBUILD .SRCINFO && git commit -m "Update to vX.Y.Z" && git push
-rm -rf /tmp/ytm-player-aur
-```
+Still manual: if dependencies changed, update `depends`/`optdepends`/`makedepends` in `aur/PKGBUILD` before tagging. Manual push fallback (if the workflow fails) is documented in `RELEASING.md`.
 
 AUR package URL: https://aur.archlinux.org/packages/ytm-player-git
 
