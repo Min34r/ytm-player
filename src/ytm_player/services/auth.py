@@ -12,6 +12,7 @@ import logging
 import os
 import sys
 import tempfile
+import keyring
 from http.cookiejar import MozillaCookieJar
 from pathlib import Path
 
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 # Browsers to try, in preference order.
 _BROWSERS = (
+    "zen",
     "helium",
     "chrome",
     "chromium",
@@ -76,6 +78,22 @@ def _patch_yt_dlp_browsers() -> None:
 
         c._get_chromium_based_browser_settings = _patched  # type: ignore[attr-defined]
         c.CHROMIUM_BASED_BROWSERS = c.CHROMIUM_BASED_BROWSERS | set(_CUSTOM_CHROMIUM_BROWSERS)
+        
+        orig_extract = c.extract_cookies_from_browser
+        def _patched_extract(browser_name, profile=None, logger=c.YDLLogger(), *, keyring=None, container=None):
+            if browser_name == 'zen':
+                orig_firefox_dirs = c._firefox_browser_dirs
+                def _patched_firefox_dirs():
+                    yield os.path.expanduser('~/.zen')
+                    yield from orig_firefox_dirs()
+                c._firefox_browser_dirs = _patched_firefox_dirs
+                try:
+                    return c._extract_firefox_cookies(profile, container, logger)
+                finally:
+                    c._firefox_browser_dirs = orig_firefox_dirs
+            return orig_extract(browser_name, profile, logger, keyring=keyring, container=container)
+        c.extract_cookies_from_browser = _patched_extract
+        
         _yt_dlp_patched = True
     except (ImportError, AttributeError) as exc:
         logger.warning(
@@ -104,6 +122,12 @@ class AuthManager:
 
     def is_authenticated(self) -> bool:
         """Check whether a valid auth file exists on disk."""
+        try:
+            if keyring.get_password("ytm-player", "auth"):
+                return True
+        except Exception:
+            pass
+
         if not self._auth_file.exists():
             return False
         try:
@@ -115,6 +139,12 @@ class AuthManager:
 
     def create_ytmusic_client(self, user: str | None = None) -> YTMusic:
         """Create a YTMusic client from the stored auth file."""
+        try:
+            auth_str = keyring.get_password("ytm-player", "auth")
+            if auth_str:
+                return YTMusic(json.loads(auth_str), user=user)
+        except Exception:
+            pass
         return YTMusic(str(self._auth_file), user=user)
 
     def validate(self) -> bool:
@@ -212,7 +242,7 @@ class AuthManager:
     def _detect_browser() -> str | None:
         """Find a browser that has YouTube cookies."""
         try:
-            from yt_dlp.cookies import extract_cookies_from_browser
+            from yt_dlp import cookies
         except ImportError:
             logger.debug("yt-dlp not available for cookie extraction")
             return None
@@ -221,7 +251,7 @@ class AuthManager:
 
         for browser in _BROWSERS:
             try:
-                jar = extract_cookies_from_browser(browser)
+                jar = cookies.extract_cookies_from_browser(browser)
                 has_sapisid = any(
                     c.name in ("SAPISID", "__Secure-3PAPISID") and c.domain == ".youtube.com"
                     for c in jar
@@ -303,10 +333,10 @@ class AuthManager:
     def _extract_and_save(self, browser: str, interactive: bool = False) -> bool:
         """Extract YouTube cookies from *browser* and write auth.json."""
         try:
-            from yt_dlp.cookies import extract_cookies_from_browser
+            from yt_dlp import cookies
 
             _patch_yt_dlp_browsers()
-            jar = extract_cookies_from_browser(browser)
+            jar = cookies.extract_cookies_from_browser(browser)
         except Exception as exc:
             logger.warning("Cookie extraction from %s failed: %s", browser, exc)
             return False
@@ -325,6 +355,9 @@ class AuthManager:
 
     def _save_youtube_cookies(self, cookies: list, interactive: bool = False) -> bool:
         """Persist YouTube cookie headers into auth.json."""
+        # Filter essential cookies to prevent 413 Request Entity Too Large
+        essential = {"sapisid", "ssid", "hsid", "sid", "login_info", "pref"}
+        cookies = [c for c in cookies if c.name.lower() in essential or c.name.lower().startswith("__secure-")]
         cookie_str = "; ".join(f"{c.name}={c.value}" for c in cookies)
 
         # Verify we have the critical SAPISID cookie.
@@ -348,22 +381,22 @@ class AuthManager:
         # Probe each account index and collect all valid YouTube Music accounts.
         # Capture any previously saved account preference before probing overwrites the auth file.
         preferred_index_before_probe: int | None = None
-        if self._auth_file.exists():
-            try:
+        try:
+            existing_str = keyring.get_password("ytm-player", "auth")
+            if existing_str:
+                existing = json.loads(existing_str)
+                preferred_index_before_probe = int(existing.get("x-goog-authuser", 0))
+            elif self._auth_file.exists():
                 existing = json.loads(self._auth_file.read_text(encoding="utf-8"))
                 preferred_index_before_probe = int(existing.get("x-goog-authuser", 0))
-            except (OSError, json.JSONDecodeError, ValueError):
-                pass
+        except (OSError, json.JSONDecodeError, ValueError, Exception):
+            pass
         self._config_dir.mkdir(parents=True, exist_ok=True)
         valid_accounts: list[tuple[int, str, str]] = []  # (authuser_index, accountName, handle)
         for authuser in authuser_indices:
             headers = {**base_headers, "x-goog-authuser": str(authuser)}
-            tmp_path: str | None = None
             try:
-                fd, tmp_path = tempfile.mkstemp(suffix=".json", dir=str(self._config_dir))
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    json.dump(headers, f, ensure_ascii=True, indent=4, sort_keys=True)
-                ytm = YTMusic(tmp_path)
+                ytm = YTMusic(headers)
                 account = ytm.get_account_info()
                 name = account.get("accountName")
                 handle = account.get("channelHandle") or ""
@@ -371,12 +404,6 @@ class AuthManager:
                     valid_accounts.append((authuser, name, handle))
             except Exception:
                 logger.debug("x-goog-authuser=%d did not work, skipping", authuser)
-            finally:
-                if tmp_path is not None:
-                    try:
-                        os.unlink(tmp_path)
-                    except OSError:
-                        pass
 
         if not valid_accounts:
             logger.warning(
@@ -438,11 +465,15 @@ class AuthManager:
             )
 
         # Write the final auth file for the chosen account.
-        # O_NOFOLLOW (POSIX-only; getattr fallback for Windows) refuses to
-        # follow a symlink at the target path — defense-in-depth against
-        # a malicious local user planting a symlink in CONFIG_DIR.
         headers = {**base_headers, "x-goog-authuser": str(chosen_index)}
+        
         try:
+            keyring.set_password("ytm-player", "auth", json.dumps(headers))
+            if self._auth_file.exists():
+                os.remove(self._auth_file)
+        except Exception as e:
+            logger.error("Failed to save credentials to keyring: %s", e)
+            # Fallback to file
             fd = os.open(
                 str(self._auth_file),
                 os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0),
@@ -450,9 +481,7 @@ class AuthManager:
             )
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(headers, f, ensure_ascii=True, indent=4, sort_keys=True)
-        except OSError:
-            logger.exception("Failed to write auth file %s", self._auth_file)
-            return False
+                
         return True
 
     # ── Manual header paste (fallback) ───────────────────────────────
