@@ -256,6 +256,7 @@ class PlaybackMixin(YTMHostBase):
                 length_us=duration_us,
             )
             await self.mpris.update_playback_status("Playing")
+            self.mpris.emit_seeked(0)
 
         if generation != self._play_generation:
             return
