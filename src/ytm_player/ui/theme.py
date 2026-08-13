@@ -84,6 +84,36 @@ YTM_DARK = Theme(
 )
 
 
+def build_matugen_theme(tc: ThemeColors | None = None) -> Theme:
+    """Construct a native Textual Theme object named 'matugen' from Matugen theme.toml."""
+    if tc is None:
+        tc = ThemeColors.load()
+    return Theme(
+        name="matugen",
+        primary=tc.primary,
+        secondary=tc.secondary,
+        accent=tc.accent,
+        success=tc.success,
+        warning=tc.warning,
+        error=tc.error,
+        foreground=tc.text,
+        background=tc.background,
+        surface=tc.surface,
+        dark=True,
+        variables={
+            "playback-bar-bg": tc.playback_bar_bg,
+            "active-tab": tc.active_tab,
+            "inactive-tab": tc.inactive_tab,
+            "selected-item": tc.selected_item,
+            "progress-filled": tc.progress_filled,
+            "progress-empty": tc.progress_empty,
+            "lyrics-played": tc.lyrics_played,
+            "lyrics-current": tc.lyrics_current,
+            "lyrics-upcoming": tc.lyrics_upcoming,
+        },
+    )
+
+
 @dataclass
 class ThemeColors:
     """Resolved color values for Rich Text rendering in widget render() methods.

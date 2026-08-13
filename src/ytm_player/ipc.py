@@ -47,6 +47,7 @@ _VALID_COMMANDS = frozenset(
         "like",
         "dislike",
         "unlike",
+        "reload_theme",
     }
 )
 

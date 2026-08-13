@@ -68,6 +68,23 @@ class IPCMixin(YTMHostBase):
                 case "unlike":
                     return await self._ipc_rate("INDIFFERENT")
 
+                case "reload_theme":
+                    from ytm_player.config.paths import THEME_FILE
+                    from ytm_player.ui.theme import ThemeColors, set_theme, build_matugen_theme
+                    new_colors = ThemeColors.load(THEME_FILE)
+                    set_theme(new_colors)
+                    self.theme_colors = new_colors
+                    matugen_theme = build_matugen_theme(new_colors)
+                    self.register_theme(matugen_theme)
+                    current = str(self.theme)
+                    if current == "matugen":
+                        self.theme = "ytm-dark"
+                        self.theme = "matugen"
+                    else:
+                        self.watch_theme(current)
+                    self.refresh(layout=True)
+                    return {"ok": True}
+
                 case _:
                     return {"ok": False, "error": f"unknown command: {command}"}
         except Exception as exc:

@@ -195,10 +195,11 @@ class YTMPlayerApp(
     def __init__(self) -> None:
         super().__init__()
 
-        # Register custom YTM theme and set the configured default.
-        from ytm_player.ui.theme import YTM_DARK
+        # Register custom themes (ytm-dark and native matugen).
+        from ytm_player.ui.theme import YTM_DARK, build_matugen_theme
 
         self.register_theme(YTM_DARK)
+        self.register_theme(build_matugen_theme())
 
         # Configuration.
         self.settings: Settings = get_settings()
@@ -580,6 +581,9 @@ class YTMPlayerApp(
         self._ipc_server = IPCServer(self._handle_ipc_command)
         await self._ipc_server.start()
 
+        # Start background theme.toml watcher for seamless live Matugen updates.
+        asyncio.create_task(self._watch_theme_file_changes())
+
         # Initialize services.
         try:
             self.ytmusic = YTMusicService(
@@ -818,5 +822,34 @@ class YTMPlayerApp(
                     f"Run: pip install -U ytm-player",
                     timeout=8,
                 )
+
+    async def _watch_theme_file_changes(self) -> None:
+        """Watch theme.toml for modifications (Matugen updates) and reload UI colors live."""
+        from ytm_player.config.paths import THEME_FILE
+        from ytm_player.ui.theme import ThemeColors, set_theme, build_matugen_theme
+
+        last_mtime: float = 0.0
+        while True:
+            try:
+                if THEME_FILE.exists():
+                    mtime = THEME_FILE.stat().st_mtime
+                    if last_mtime != 0.0 and mtime != last_mtime:
+                        logger.info("Detected change in theme.toml, auto-reloading Matugen colors...")
+                        new_colors = ThemeColors.load(THEME_FILE)
+                        set_theme(new_colors)
+                        self.theme_colors = new_colors
+                        matugen_theme = build_matugen_theme(new_colors)
+                        self.register_theme(matugen_theme)
+                        current = str(self.theme)
+                        if current == "matugen":
+                            self.theme = "ytm-dark"
+                            self.theme = "matugen"
+                        else:
+                            self.watch_theme(current)
+                        self.refresh(layout=True)
+                    last_mtime = mtime
+            except Exception:
+                pass
+            await asyncio.sleep(1.5)
 
         self.run_worker(_run(), group="update-check", exclusive=True)

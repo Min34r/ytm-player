@@ -255,6 +255,64 @@ def setup(manual: bool, browser: str | None) -> None:
         )
 
 
+@main.command("setup-matugen")
+def setup_matugen() -> None:
+    """Auto-configure Matugen template and config for plug-and-play Material You colors."""
+    from pathlib import Path
+
+    matugen_dir = Path.home() / ".config" / "matugen"
+    templates_dir = matugen_dir / "templates"
+    matugen_config = matugen_dir / "config.toml"
+    ytm_template = templates_dir / "ytm-theme.toml"
+
+    templates_dir.mkdir(parents=True, exist_ok=True)
+
+    template_content = """[colors]
+background = "{{colors.background.default.hex}}"
+foreground = "{{colors.on_background.default.hex}}"
+surface = "{{colors.surface.default.hex}}"
+primary = "{{colors.primary.default.hex}}"
+secondary = "{{colors.secondary.default.hex}}"
+accent = "{{colors.tertiary.default.hex}}"
+success = "{{colors.primary.default.hex}}"
+warning = "{{colors.error_container.default.hex}}"
+error = "{{colors.error.default.hex}}"
+border = "{{colors.outline.default.hex}}"
+muted_text = "{{colors.on_surface_variant.default.hex}}"
+text = "{{colors.on_surface.default.hex}}"
+
+playback_bar_bg = "{{colors.surface_container.default.hex}}"
+selected_item = "{{colors.surface_container_highest.default.hex}}"
+progress_filled = "{{colors.primary.default.hex}}"
+progress_empty = "{{colors.surface_container_high.default.hex}}"
+lyrics_played = "{{colors.on_surface_variant.default.hex}}"
+lyrics_current = "{{colors.primary.default.hex}}"
+lyrics_upcoming = "{{colors.on_surface_variant.default.hex}}"
+active_tab = "{{colors.primary.default.hex}}"
+inactive_tab = "{{colors.on_surface_variant.default.hex}}"
+"""
+
+    if not ytm_template.exists():
+        ytm_template.write_text(template_content, encoding="utf-8")
+        click.echo(f"Created template: {ytm_template}")
+    else:
+        click.echo(f"Template already exists: {ytm_template}")
+
+    if matugen_config.exists():
+        config_text = matugen_config.read_text(encoding="utf-8")
+        if "[templates.ytm_player]" not in config_text:
+            block = """\n[templates.ytm_player]
+input_path = "~/.config/matugen/templates/ytm-theme.toml"
+output_path = "~/.config/ytm-player/theme.toml"
+"""
+            matugen_config.write_text(config_text + block, encoding="utf-8")
+            click.echo(f"Added ytm_player entry to {matugen_config}")
+        else:
+            click.echo(f"Matugen config already contains [templates.ytm_player].")
+
+    click.echo("\n✨ Matugen integration ready! Run `matugen image /path/to/wallpaper` to set active colors.")
+
+
 # ---------------------------------------------------------------------------
 # Playback controls (require TUI running)
 # ---------------------------------------------------------------------------
@@ -292,6 +350,12 @@ def seek(offset: str) -> None:
     OFFSET can be relative ("+10", "-10" for seconds) or absolute ("1:30").
     """
     _ipc_action("seek", f"Seeked to {offset}.", {"offset": offset})
+
+
+@main.command("reload-theme")
+def reload_theme() -> None:
+    """Reload UI theme from theme.toml."""
+    _ipc_action("reload_theme", "Theme reloaded.")
 
 
 # ---------------------------------------------------------------------------
