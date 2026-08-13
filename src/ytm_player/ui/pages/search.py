@@ -568,26 +568,54 @@ class SearchPage(Widget):
         self.run_worker(self._execute_search(query), name="search", exclusive=True)
 
     def on_key(self, event: object) -> None:
-        """Handle Escape on the search input: hide suggestions + defocus."""
+        """Handle Escape and Arrow keys on the search input for suggestion navigation."""
         from textual.events import Key
 
         if not isinstance(event, Key):
             return
-        if event.key != "escape":
-            return
 
-        # Only act when the search input is focused OR the suggestions
-        # dropdown is visible. Otherwise let Escape bubble normally.
         focused = self.app.focused
         input_focused = focused is not None and getattr(focused, "id", None) == "search-input"
 
         suggestions_visible = False
+        overlay: SuggestionList | None = None
         try:
             overlay = self.query_one("#suggestion-overlay", SuggestionList)
             suggestions_visible = overlay.has_class("visible")
         except Exception:
             pass
 
+        # Handle Down arrow / Alt+j / Ctrl+j / Ctrl+n from search input to suggestion dropdown
+        if event.key in ("down", "alt+j", "ctrl+j", "ctrl+n") and input_focused and suggestions_visible and overlay is not None:
+            try:
+                list_view = overlay.query_one(ListView)
+                if list_view.children:
+                    event.stop()
+                    event.prevent_default()
+                    list_view.index = 0
+                    list_view.focus()
+                    return
+            except Exception:
+                pass
+
+        # Handle Up arrow / Alt+k / Ctrl+k / Ctrl+p from suggestion list back to search input
+        if event.key in ("up", "alt+k", "ctrl+k", "ctrl+p") and suggestions_visible and not input_focused and overlay is not None:
+            try:
+                list_view = overlay.query_one(ListView)
+                if list_view.index == 0 or list_view.index is None:
+                    event.stop()
+                    event.prevent_default()
+                    search_input = self.query_one("#search-input", Input)
+                    search_input.focus()
+                    return
+            except Exception:
+                pass
+
+        if event.key != "escape":
+            return
+
+        # Only act when the search input is focused OR the suggestions
+        # dropdown is visible. Otherwise let Escape bubble normally.
         if not (input_focused or suggestions_visible):
             return
 
@@ -865,15 +893,7 @@ class SearchPage(Widget):
         else:
             self.search_mode = "music"
 
-        # Update the mode indicator.
-        mode_label = self.query_one("#search-mode", Static)
-        mode_color = get_theme().primary
-        display = (
-            f"[{mode_color}]▶[/{mode_color}] Music"
-            if self.search_mode == "music"
-            else f"[{mode_color}]▶[/{mode_color}] All"
-        )
-        mode_label.update(display)
+        self._update_mode_label()
 
         # Re-run the last search with the new mode if we have a query.
         if self._last_query:
@@ -882,6 +902,20 @@ class SearchPage(Widget):
                 name="search",
                 exclusive=True,
             )
+
+    def _update_mode_label(self) -> None:
+        """Update the search mode indicator with current theme colors."""
+        try:
+            mode_label = self.query_one("#search-mode", Static)
+            mode_color = get_theme().primary
+            display = (
+                f"[{mode_color}]▶[/{mode_color}] Music"
+                if self.search_mode == "music"
+                else f"[{mode_color}]▶[/{mode_color}] All"
+            )
+            mode_label.update(display)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Track and item selection handlers
