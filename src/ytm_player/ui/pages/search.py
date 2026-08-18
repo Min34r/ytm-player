@@ -285,6 +285,11 @@ class SearchPage(Widget):
     #search-input {
         width: 1fr;
         margin: 0 1 0 0;
+        border: solid $secondary;
+    }
+
+    #search-input:focus {
+        border: solid $primary;
     }
 
     #search-mode {
