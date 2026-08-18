@@ -100,7 +100,14 @@ class StreamResolver:
             # that unblocks madeForKids content which the default web client refuses.
             "extractor_args": {"youtube": {"player_client": ["default", "android"]}},
         }
-        return apply_configured_yt_dlp_options(opts, settings)
+        apply_configured_yt_dlp_options(opts, settings)
+        if "cookiefile" not in opts:
+            from ytm_player.services.auth import AuthManager
+
+            auth_cookies = AuthManager().get_or_export_cookies_txt()
+            if auth_cookies and auth_cookies.exists():
+                opts["cookiefile"] = str(auth_cookies)
+        return opts
 
     def _get_ydl(self) -> Any:
         """Return a reusable YoutubeDL instance, creating it lazily."""

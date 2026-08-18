@@ -547,14 +547,20 @@ class YTMPlayerApp(
         # Check authentication.
         auth = AuthManager(cookies_file=self.settings.yt_dlp.cookies_file)
         if not auth.is_authenticated():
-            self.notify(
-                "Not signed in to YouTube Music. Run `ytm setup` to connect your account.",
-                severity="error",
-                timeout=5,
-            )
-            # Give the user a moment to see the message.
-            self.set_timer(2.0, self.exit)
-            return
+            logger.info("Not signed in on startup, attempting auto-detection from browser...")
+            refreshed = await asyncio.to_thread(auth.try_auto_refresh)
+            if refreshed:
+                self.notify("Signed in automatically from browser.", timeout=4)
+                logger.info("First-run auto-auth succeeded.")
+            else:
+                self.notify(
+                    "Not signed in to YouTube Music. Run `ytm setup` to connect your account.",
+                    severity="error",
+                    timeout=5,
+                )
+                # Give the user a moment to see the message.
+                self.set_timer(2.0, self.exit)
+                return
 
         # Validate auth actually works (not just file exists).
         auth_valid = await asyncio.to_thread(auth.validate)

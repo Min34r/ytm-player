@@ -216,6 +216,66 @@ class AuthManager:
             pass
         return YTMusic(str(self._auth_file), user=user)
 
+    def get_or_export_cookies_txt(self) -> Path | None:
+        """Return a path to a Netscape cookies.txt file for yt-dlp.
+
+        If a custom cookies_file was specified, returns that.
+        Otherwise exports stored cookies from Keyring/auth.json to
+        ~/.config/ytm-player/cookies.txt with secure 0600 permissions.
+        """
+        if self._cookies_file:
+            path = Path(self._cookies_file)
+            if path.is_file():
+                return path
+
+        cookies_txt = self._config_dir / "cookies.txt"
+        
+        cookie_str: str | None = None
+        try:
+            auth_str = _keyring_get_password()
+            if auth_str:
+                cookie_str = json.loads(auth_str).get("cookie")
+        except Exception:
+            pass
+
+        if not cookie_str and self._auth_file.exists():
+            try:
+                cookie_str = json.loads(self._auth_file.read_text(encoding="utf-8")).get("cookie")
+            except Exception:
+                pass
+
+        if not cookie_str:
+            return None
+
+        self._export_cookies_txt(cookie_str, cookies_txt)
+        return cookies_txt
+
+    def _export_cookies_txt(self, cookie_str: str, target_file: Path) -> None:
+        """Export cookie string to a secure Netscape formatted cookies.txt file."""
+        try:
+            import time
+            lines = ["# Netscape HTTP Cookie File\n"]
+            expiry = int(time.time()) + 86400 * 30
+            for item in cookie_str.split("; "):
+                if "=" in item:
+                    name, val = item.split("=", 1)
+                    name = name.strip()
+                    val = val.strip()
+                    if name:
+                        lines.append(f".youtube.com\tTRUE\t/\tTRUE\t{expiry}\t{name}\t{val}\n")
+            
+            self._config_dir.mkdir(parents=True, exist_ok=True)
+            fd = os.open(
+                str(target_file),
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0),
+                SECURE_FILE_MODE,
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.writelines(lines)
+            secure_chmod(target_file, SECURE_FILE_MODE)
+        except Exception as exc:
+            logger.warning("Failed to export Netscape cookies to %s: %s", target_file, exc)
+
     def validate(self) -> bool:
         """Verify that the auth credentials actually work.
 
