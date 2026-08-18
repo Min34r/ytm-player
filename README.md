@@ -21,71 +21,56 @@
   <a href="https://github.com/peternaame-boop/ytm-player/blob/master/CHANGELOG.md"><img src="https://img.shields.io/badge/Changelog-ff4e45?style=for-the-badge&labelColor=0f0f0f" alt="Changelog"></a>
 </p>
 
----
+> [!NOTE]
+> This is a feature fork of [peternaame-boop/ytm-player](https://github.com/peternaame-boop/ytm-player) with native Matugen dynamic theming, Keyring authentication, YouTube Premium 256kbps stream support, search navigation enhancements, and Linux desktop integration.
 
-![ytm-player demo](https://raw.githubusercontent.com/peternaame-boop/ytm-player/master/docs/images/ytm-demo.gif)
+## Fork Enhancements & Changes
 
-> Available on **PyPI**, **AUR**, **NixOS**, and **Gentoo** — actively maintained with cross-platform support.
-
-## Features
-
-- **Vim-style keybindings** — j/k movement, multi-key sequences (`g s` for search, `g l` for library), count prefixes (`5j`)
-- **Synced lyrics** — live-highlighted with LRCLIB fallback for tracks YouTube doesn't have, with title sanitization for better LRCLIB matches
-- **mpv backend** — gapless audio, stream prefetching, broad codec support
-- **Cross-platform native integrations** — MPRIS (Linux), Now Playing (macOS), media keys (Windows)
-- **Theming** — 18+ Textual themes plus per-app color overrides in `theme.toml`
-- **Spotify import** — pull playlists in via API or scraper fallback
-- **CLI + IPC** — control a running TUI from another terminal (`ytm play`, `ytm pause`, etc.)
-- **Free-tier support** — works without YouTube Music Premium
-- **Session resume** — last-playing track + queue restored on launch
-- **Local cache** — LRU audio cache for offline-like replay of previously heard tracks
-- **Discord + Last.fm** — Rich Presence and scrobbling
-
-## Requirements
-
-- **Python 3.10+**
-- **[mpv](https://mpv.io/)** (audio playback backend, must be installed system-wide)
-- A YouTube Music account (free or Premium)
+- **Native Matugen Dynamic Theming & Live Hot-Reload**:
+  - Built-in `matugen` theme reading colors directly from `~/.config/ytm-player/theme.toml`.
+  - Automatic file watcher that detects wallpaper changes (e.g. via Waypaper) and reloads Textual CSS variables live without restarting the player.
+  - `ytm setup-matugen` CLI command to link and generate Matugen template files automatically.
+- **YouTube Music Premium 256kbps Audio Support**:
+  - Automatic export of session cookies into a secure Netscape `cookies.txt` for `yt-dlp`.
+  - Resolves native **Format 774 (256kbps Opus)** high-bitrate audio for Premium accounts without 403 Forbidden errors.
+- **Robust Authentication & System Keyring**:
+  - Secure credential storage via system Keyring (GNOME Keyring / KWallet / KeePassXC) with safe `0600` file fallback.
+  - Native Zen Browser cookie detection across Linux, macOS, and Windows.
+  - Multi-account slot probing (`x-goog-authuser` 0–4) to select and lock onto the correct YouTube Music profile.
+  - Essential cookie filtering to prevent header bloat and false "session expired" errors.
+  - First-launch zero-touch auto-login on startup.
+- **Search & Keyboard Navigation**:
+  - Added arrow keys (`Down`/`Up`), Vim (`Ctrl+j`/`Ctrl+k`, `Alt+j`/`Alt+k`), and Emacs (`Ctrl+n`/`Ctrl+p`) navigation between the search input box and suggestion dropdown.
+  - High-contrast border styling for the search input bar.
+- **Desktop & MPRIS Integration**:
+  - Track start `Seeked(0)` signal for instant Waybar/AGS seekbar synchronization.
+  - XDG `.desktop` launcher entry (`ytm-player.desktop`) with `Terminal=true`.
+  - Updated Arch Linux `aur/PKGBUILD` to install the desktop launcher file.
 
 ## Install
 
 ```bash
-# PyPI (Linux / macOS / Windows)
-pip install ytm-player
+# Install with pipx (recommended)
+pipx install git+https://github.com/Min34r/ytm-player.git
 
-# Arch / CachyOS / Manjaro (AUR)
-yay -S ytm-player-git
+# Or install from local source
+git clone https://github.com/Min34r/ytm-player.git
+cd ytm-player
+pip install -e .
+
+# Arch Linux (local PKGBUILD)
+cd aur && makepkg -si
 ```
-
-For NixOS, Gentoo, Windows-specific mpv DLL setup, source builds, and optional extras (Discord, Last.fm, Spotify import, etc.), see [docs/installation.md](https://github.com/peternaame-boop/ytm-player/blob/master/docs/installation.md).
 
 ## Quickstart
 
 ```bash
-ytm setup    # one-time auth (auto-detects browser cookies)
-ytm          # launch the TUI
+ytm setup           # One-time auth (auto-detects browser cookies)
+ytm setup-matugen   # (Optional) Setup Matugen dynamic theme integration
+ytm                 # Launch the TUI
 ```
 
-Windows: replace `ytm` with `py -m ytm_player`.
+## Contributors & Upstream Credit
 
-## Documentation
-
-| Topic | Link |
-|-------|------|
-| Per-platform install + optional extras | [docs/installation.md](https://github.com/peternaame-boop/ytm-player/blob/master/docs/installation.md) |
-| `config.toml` + `theme.toml` reference | [docs/configuration.md](https://github.com/peternaame-boop/ytm-player/blob/master/docs/configuration.md) |
-| Full keyboard + mouse keybindings | [docs/keybindings.md](https://github.com/peternaame-boop/ytm-player/blob/master/docs/keybindings.md) |
-| All `ytm` CLI subcommands | [docs/cli-reference.md](https://github.com/peternaame-boop/ytm-player/blob/master/docs/cli-reference.md) |
-| Spotify playlist import | [docs/spotify-import.md](https://github.com/peternaame-boop/ytm-player/blob/master/docs/spotify-import.md) |
-| Troubleshooting (mpv / auth / MPRIS / macOS / cache) | [docs/troubleshooting.md](https://github.com/peternaame-boop/ytm-player/blob/master/docs/troubleshooting.md) |
-| File layout + stack | [docs/architecture.md](https://github.com/peternaame-boop/ytm-player/blob/master/docs/architecture.md) |
-| Contributing | [CONTRIBUTING.md](https://github.com/peternaame-boop/ytm-player/blob/master/CONTRIBUTING.md) |
-| Security policy | [SECURITY.md](https://github.com/peternaame-boop/ytm-player/blob/master/SECURITY.md) |
-
-## Contributors
-
-Thanks to [@dmnmsc](https://github.com/dmnmsc), [@Villoh](https://github.com/Villoh), [@valkyrieglasc](https://github.com/valkyrieglasc), [@dsafxP](https://github.com/dsafxP), [@Thayrov](https://github.com/Thayrov), [@glywil](https://github.com/glywil), [@Kineforce](https://github.com/Kineforce), [@CarterSnich](https://github.com/CarterSnich), [@Tohbuu](https://github.com/Tohbuu), [@nitsujri](https://github.com/nitsujri), [@uhs-robert](https://github.com/uhs-robert), [@moschi](https://github.com/moschi), [@firedev](https://github.com/firedev), [@wgordon17](https://github.com/wgordon17), [@gitiy1](https://github.com/gitiy1), [@hanandewa5](https://github.com/hanandewa5), [@aimar-a](https://github.com/aimar-a), [@Gimar250](https://github.com/Gimar250), [@Wiibleyde](https://github.com/Wiibleyde), [@szx19970521](https://github.com/szx19970521), [@aaguilar-hub](https://github.com/aaguilar-hub), [@TheoBassaw](https://github.com/TheoBassaw), [@holstvoogd](https://github.com/holstvoogd), and [@ProfessionalGriefer](https://github.com/ProfessionalGriefer) for bug reports, fixes, packaging, and platform support.
-
-## Changelog
-
-See [CHANGELOG.md](https://github.com/peternaame-boop/ytm-player/blob/master/CHANGELOG.md) for the full release history.
+This fork builds upon [peternaame-boop/ytm-player](https://github.com/peternaame-boop/ytm-player). Thanks to the original author and upstream contributors:
+[@peternaame-boop](https://github.com/peternaame-boop), [@dmnmsc](https://github.com/dmnmsc), [@Villoh](https://github.com/Villoh), [@valkyrieglasc](https://github.com/valkyrieglasc), [@dsafxP](https://github.com/dsafxP), [@Thayrov](https://github.com/Thayrov), [@glywil](https://github.com/glywil), [@Kineforce](https://github.com/Kineforce), [@CarterSnich](https://github.com/CarterSnich), [@Tohbuu](https://github.com/Tohbuu), [@nitsujri](https://github.com/nitsujri), [@uhs-robert](https://github.com/uhs-robert), [@moschi](https://github.com/moschi), [@firedev](https://github.com/firedev), [@wgordon17](https://github.com/wgordon17), [@gitiy1](https://github.com/gitiy1), [@hanandewa5](https://github.com/hanandewa5), [@aimar-a](https://github.com/aimar-a), [@Gimar250](https://github.com/Gimar250), [@Wiibleyde](https://github.com/Wiibleyde), [@szx19970521](https://github.com/szx19970521), [@aaguilar-hub](https://github.com/aaguilar-hub), [@TheoBassaw](https://github.com/TheoBassaw), [@holstvoogd](https://github.com/holstvoogd), and [@ProfessionalGriefer](https://github.com/ProfessionalGriefer).
