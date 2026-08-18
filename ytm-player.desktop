@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=YouTube Music TUI
+GenericName=Music Player
+Comment=A full-featured YouTube Music TUI client with vim-style navigation
+Exec=ytm
+Icon=multimedia-audio-player
+Terminal=true
+Type=Application
+Categories=AudioVideo;Player;Audio;ConsoleOnly;
+Keywords=youtube;music;player;tui;terminal;
